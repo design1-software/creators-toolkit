@@ -1,0 +1,26 @@
+# ── Dependencies ──────────────────────────────────────────────────────────────
+node_modules/
+
+# ── Next.js build output ──────────────────────────────────────────────────────
+web/.next/
+web/tsconfig.tsbuildinfo
+
+# ── Remotion build output ─────────────────────────────────────────────────────
+project/out/
+
+# ── Rendered video files ──────────────────────────────────────────────────────
+# These are generated at runtime and can be large — never commit them.
+output/
+project/output/
+web/public/uploads/
+
+# ── Environment variables ─────────────────────────────────────────────────────
+# API keys live here — NEVER commit this file.
+.env
+.env.local
+.env.*.local
+
+# ── OS and editor junk ────────────────────────────────────────────────────────
+.DS_Store
+Thumbs.db
+.vscode/settings.json

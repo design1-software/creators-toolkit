@@ -1,0 +1,88 @@
+// 📘 WHAT THIS FILE DOES: Triggers the Remotion CLI to render the PromoVideo composition.
+// It receives all production parameters (brand name, tagline, colors, voiceSrc, etc.)
+// and shells out to the Remotion project to render the final MP4 brand video.
+// 🔗 Remotion CLI rendering: https://www.remotion.dev/docs/render
+
+import { NextRequest, NextResponse } from "next/server";
+import { exec } from "child_process";
+import { promisify } from "util";
+import path from "path";
+import fs from "fs";
+
+// 📘 'promisify' converts exec() from callback style to async/await style.
+// This lets us use 'await' instead of nested callback functions.
+// 🔗 async/await: https://www.w3schools.com/js/js_async.asp
+const execAsync = promisify(exec);
+
+export async function POST(req: NextRequest) {
+  try {
+    const { jobId, production, voiceSrc, backgroundImageSrc } = await req.json();
+
+    if (!jobId || !production) {
+      return NextResponse.json(
+        { error: "jobId and production are required" },
+        { status: 400 }
+      );
+    }
+
+    const remotionProjectPath = process.env.REMOTION_PROJECT_PATH;
+    if (!remotionProjectPath) {
+      return NextResponse.json(
+        { error: "REMOTION_PROJECT_PATH env var is not set" },
+        { status: 500 }
+      );
+    }
+
+    // 📘 The rendered MP4 saves directly into the web app's public/ folder
+    // so it's immediately accessible via a browser URL like /renders/promo/abc123.mp4.
+    const outputDir = path.join(process.cwd(), "public", "renders", "promo");
+    if (!fs.existsSync(outputDir)) {
+      fs.mkdirSync(outputDir, { recursive: true });
+    }
+
+    const outputFileName = `${jobId}.mp4`;
+    const outputPath = path.join(outputDir, outputFileName);
+
+    // 📘 Calculate how many frames the video should be.
+    // durationSeconds comes from Claude's script-length estimate in the parse step.
+    // Multiply by 30 (the fps) to get total frames.
+    // 🔗 JavaScript Math: https://www.w3schools.com/js/js_math.asp
+    const durationSeconds = Math.max(20, Math.min(60, production.durationSeconds ?? 30));
+    const durationInFrames = Math.round(durationSeconds * 30);
+
+    // 📘 Build the props object — passed to the PromoVideo React component at render time.
+    // JSON.stringify() converts the JS object to a JSON string for the CLI flag.
+    const props = JSON.stringify({
+      brandName: production.brandName ?? "Brand",
+      tagline: production.tagline ?? "",
+      keyMessages: production.keyMessages ?? [],
+      cta: production.cta ?? "",
+      gradientFrom: production.gradientFrom ?? "#0a0a0f",
+      gradientTo: production.gradientTo ?? "#1a1a2e",
+      accentColor: production.accentColor ?? "#7c3aed",
+      textColor: production.textColor ?? "#ffffff",
+      // 📘 voiceSrc is the mixed audio (voiceover + music) relative to Remotion public/.
+      voiceSrc: voiceSrc ?? "",
+      // 📘 backgroundImageSrc is the Kie.ai image relative to Remotion public/.
+      // If image generation was skipped or failed, this is undefined and the
+      // PromoVideo composition falls back to the CSS gradient background.
+      backgroundImageSrc: backgroundImageSrc ?? undefined,
+    });
+
+    // 📘 Build the shell command that tells the Remotion CLI what to render.
+    // We 'cd' into the Remotion project folder first so Remotion can find its config.
+    // --props passes our data as JSON, --duration-in-frames sets the video length.
+    const command = `cd "${remotionProjectPath}" && npx remotion render PromoVideo "${outputPath}" --props='${props}' --duration-in-frames=${durationInFrames} --fps=30`;
+
+    // 📘 The render can take 1–5 minutes depending on video length and machine speed.
+    // The timeout is set to 10 minutes (600,000 ms) to handle slower machines.
+    await execAsync(command, { timeout: 600_000 });
+
+    // 📘 Return the public URL path so the browser can play or download the video.
+    const publicUrl = `/renders/promo/${outputFileName}`;
+    return NextResponse.json({ url: publicUrl });
+  } catch (err) {
+    const message = err instanceof Error ? err.message : "Unknown error";
+    return NextResponse.json({ error: message }, { status: 500 });
+  }
+}

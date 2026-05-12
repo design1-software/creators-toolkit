@@ -1,0 +1,43 @@
+/* 📘 WHAT THIS FILE DOES: Global styles applied to every page in the app.
+   CSS rules here affect the entire site — think of it as the "base coat."
+   🔗 CSS reference: https://www.w3schools.com/css/ */
+
+/* 📘 Tailwind's @import pulls in its utility class system.
+   This gives us helper classes like flex, p-4, text-white, rounded-xl, etc. */
+@import "tailwindcss";
+
+/* 📘 CSS custom properties (variables) let you define a color or value once
+   and reuse it everywhere. Changing --color-accent here updates the whole app.
+   :root targets the top-level element — these variables are globally available. */
+:root {
+  --color-bg: #0a0a0f;           /* near-black background */
+  --color-surface: #13131a;      /* cards and panels */
+  --color-border: #2a2a3a;       /* subtle borders */
+  --color-accent: #7c3aed;       /* purple brand accent */
+  --color-accent-light: #a78bfa; /* lighter purple for hover states */
+  --color-text: #e2e8f0;         /* main body text */
+  --color-muted: #64748b;        /* secondary/helper text */
+}
+
+/* 📘 'body' targets the entire page — a good place for global font and color settings.
+   🔗 Learn more: https://www.w3schools.com/css/css_syntax.asp */
+body {
+  background-color: var(--color-bg);
+  color: var(--color-text);
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  -webkit-font-smoothing: antialiased; /* smoother text on Mac retina screens */
+}
+
+/* 📘 'box-sizing: border-box' includes padding + border in an element's width.
+   Without it a 100px wide div with 10px padding would actually be 120px wide.
+   Applying it to '*' (everything) makes sizing predictable across the whole app.
+   🔗 Learn more: https://www.w3schools.com/css/css_boxmodel.asp */
+*, *::before, *::after {
+  box-sizing: border-box;
+}
+
+/* 📘 Custom scrollbar — only works in Chrome/Safari (webkit browsers).
+   This gives the dark app a scrollbar that matches the color scheme. */
+::-webkit-scrollbar { width: 6px; }
+::-webkit-scrollbar-track { background: var(--color-surface); }
+::-webkit-scrollbar-thumb { background: var(--color-border); border-radius: 3px; }
