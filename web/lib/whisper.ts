@@ -1,100 +1,70 @@
-// 📘 WHAT THIS FILE DOES: Runs Whisper.cpp to transcribe audio to word-level timestamps.
-// Whisper is an AI speech recognition model from OpenAI.
-// Whisper.cpp is a fast C++ port that runs locally on your Mac — no API calls needed.
-// It outputs per-word timestamps we use to sync captions to the video.
-// 🔗 Whisper.cpp: https://github.com/ggerganov/whisper.cpp
+// 📘 WHAT THIS FILE DOES: Transcribes audio to word-level timestamps using OpenAI's Whisper API.
+// Previously this ran a local whisper-cpp binary on your Mac.
+// Now it sends the audio file to OpenAI's cloud API — no binary or model files needed.
+// The function names and return types stay the same so the rest of the app doesn't change.
+// 🔗 OpenAI Whisper API: https://platform.openai.com/docs/guides/speech-to-text
+// 🔗 JavaScript fetch API: https://www.w3schools.com/js/js_api_fetch.asp
 
-import { exec } from "child_process";
-import { promisify } from "util";
 import fs from "fs";
-import path from "path";
+import OpenAI from "openai";
 
-const execAsync = promisify(exec);
-
-// 📘 A WordTimestamp is one word from the transcription with its start/end time.
-// This matches the shape used in CaptionedVideo.tsx (both must stay in sync).
+// 📘 A WordTimestamp is one word from the transcription with its start/end time in seconds.
+// This matches the shape used in CaptionedVideo.tsx — both must stay in sync.
 export type WordTimestamp = {
   word: string;  // the transcribed word
   start: number; // start time in seconds
   end: number;   // end time in seconds
 };
 
-// 📘 Runs Whisper.cpp on a WAV audio file and returns word-level timestamps.
+// 📘 Create one OpenAI client to reuse across calls — the "singleton pattern".
+// It reads OPENAI_API_KEY from environment variables automatically.
+// 🔗 Environment variables: https://www.w3schools.com/nodejs/nodejs_environment.asp
+const openai = new OpenAI({
+  apiKey: process.env.OPENAI_API_KEY,
+});
+
+// 📘 Sends an audio file to OpenAI Whisper and returns word-level timestamps.
 // Parameters:
-//   audioPath — path to a 16kHz mono WAV file (extracted by ffprobe.ts)
-//   modelPath — path to the Whisper model file (e.g. ggml-base.en.bin)
+//   audioPath — path to a WAV or MP3 audio file (extracted by ffprobe.ts)
+//   _modelPath — ignored (kept for API compatibility with the old local version)
 // Returns: array of WordTimestamp objects sorted by start time
+// 🔗 OpenAI transcription docs: https://platform.openai.com/docs/api-reference/audio/createTranscription
 export async function transcribeAudio(
   audioPath: string,
-  modelPath: string
+  _modelPath: string  // 📘 Prefixed with _ to signal "intentionally unused parameter"
 ): Promise<WordTimestamp[]> {
-  const whisperPath = process.env.WHISPER_PATH || "whisper-cpp";
 
-  // 📘 Build the output path for Whisper's JSON output.
-  // Whisper creates a file named <input>.json next to the audio file.
-  const outputBase = audioPath.replace(/\.wav$/, "");
-  const jsonOutput = `${outputBase}.json`;
+  // 📘 fs.createReadStream() reads a file as a stream — efficient for large audio files
+  // because it doesn't load the whole file into memory at once.
+  // 🔗 Node.js file streams: https://www.w3schools.com/nodejs/nodejs_filesystem.asp
+  const audioStream = fs.createReadStream(audioPath);
 
-  // 📘 The Whisper.cpp CLI command:
-  // -m model    = which AI model to use
-  // -f audio    = input audio file
-  // --output-json = save output as JSON (word-level timestamps)
-  // --word-thold 0.01 = minimum confidence threshold for a word
-  const command = `"${whisperPath}" -m "${modelPath}" -f "${audioPath}" --output-json --word-thold 0.01`;
+  // 📘 Call the OpenAI Whisper API with 'verbose_json' format.
+  // This returns word-level timestamps — more detail than the default plain text response.
+  // 'timestamp_granularities' tells Whisper we want per-word timing, not just per-segment.
+  const response = await openai.audio.transcriptions.create({
+    file:                     audioStream,
+    model:                    "whisper-1",      // the only Whisper model available via API
+    response_format:          "verbose_json",   // returns segments + words with timestamps
+    timestamp_granularities:  ["word"],         // request word-level timestamps specifically
+  });
 
-  // 📘 Run the command and wait for it to finish.
-  // Whisper can take 10–60 seconds depending on audio length and model size.
-  await execAsync(command, { timeout: 120000 }); // 2 minute timeout
+  // 📘 The API returns a 'words' array when timestamp_granularities includes "word".
+  // Each entry has { word, start, end } — exactly our WordTimestamp shape.
+  // We use the nullish coalescing operator (??) to fall back to an empty array if missing.
+  const words: WordTimestamp[] = (response.words ?? []).map((w) => ({
+    word:  w.word.trim(),
+    start: w.start,
+    end:   w.end,
+  }));
 
-  // 📘 Read and parse the JSON output file Whisper created.
-  if (!fs.existsSync(jsonOutput)) {
-    throw new Error(`Whisper did not create output file at: ${jsonOutput}`);
-  }
-
-  const raw = JSON.parse(fs.readFileSync(jsonOutput, "utf-8"));
-
-  // 📘 Whisper's JSON structure has a 'transcription' array.
-  // Each item has 'offsets' (timestamps in milliseconds) and 'text'.
-  // We map this into our simpler WordTimestamp format.
-  // 🔗 Array.map: https://www.w3schools.com/jsref/jsref_map.asp
-  const words: WordTimestamp[] = (raw.transcription ?? []).map(
-    (item: { offsets: { from: number; to: number }; text: string }) => ({
-      word: item.text.trim(),
-      start: item.offsets.from / 1000, // convert ms → seconds
-      end: item.offsets.to / 1000,
-    })
-  );
-
-  // 📘 Clean up the temporary JSON file — we don't need it anymore.
-  try { fs.unlinkSync(jsonOutput); } catch { /* ignore cleanup errors */ }
-
-  // 📘 Filter out empty words (Whisper sometimes outputs blank entries).
+  // 📘 Filter out any empty words Whisper may return (rare but possible).
   return words.filter((w) => w.word.length > 0);
 }
 
-// 📘 Checks if the Whisper model file exists and returns its path.
-// If the model isn't downloaded yet, it throws a helpful error message.
-// Parameters:
-//   modelDir — directory where Whisper model files are stored
-// Returns: path to the model file
-export function getModelPath(modelDir: string): string {
-  // 📘 We prefer the English-only base model — fastest and accurate enough for short videos.
-  const candidates = [
-    path.join(modelDir, "ggml-base.en.bin"),
-    path.join(modelDir, "ggml-base.bin"),
-    path.join(modelDir, "ggml-small.en.bin"),
-  ];
-
-  // 📘 Array.find() returns the first item that passes the test.
-  // fs.existsSync() returns true if a file exists at that path.
-  const found = candidates.find((p) => fs.existsSync(p));
-
-  if (!found) {
-    throw new Error(
-      `No Whisper model found in ${modelDir}. Download one with:\n` +
-      `  cd "${modelDir}" && bash ./models/download-ggml-model.sh base.en`
-    );
-  }
-
-  return found;
+// 📘 This function previously found the local model .bin file.
+// It's kept here so the transcribe route doesn't need to change —
+// we just return an empty string since the API doesn't need a model path.
+export function getModelPath(_modelDir: string): string {
+  return ""; // 📘 OpenAI hosts the model — no local file needed
 }
