@@ -70,6 +70,12 @@ COPY --from=builder /app/web/public           ./public
 COPY --from=project-deps /app/project/node_modules ./project/node_modules
 COPY project/ ./project/
 
+# 📘 Explicitly delete any remotion config file that may have survived Docker's
+# layer cache. Even if .dockerignore and git deletion didn't bust the cache,
+# this RUN command always executes and guarantees the file cannot exist.
+# Options are passed via CLI flags (--gl, --concurrency) in the render routes instead.
+RUN rm -f /app/project/remotion.config.ts /app/project/remotion.config.js
+
 # 📘 Railway injects its own PORT at runtime — Next.js standalone reads it automatically.
 EXPOSE 8080
 ENV HOSTNAME="0.0.0.0"
