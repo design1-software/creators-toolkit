@@ -1,0 +1,16 @@
+# 📘 WHAT THIS FILE DOES: Tells Netlify how to build and deploy this project.
+# Netlify reads this file automatically when it pulls from GitHub.
+# 'base' points to the Next.js app subfolder. All other paths are relative to it.
+# 🔗 Netlify config docs: https://docs.netlify.com/configure-builds/file-based-configuration/
+
+[build]
+  base    = "web"          # run all build commands from inside the web/ folder
+  command = "npm run build"
+  publish = ".next"        # Next.js output folder (relative to base)
+
+# 📘 This plugin teaches Netlify how to handle Next.js features:
+# API routes, server components, image optimization, redirects, etc.
+# Without it, Netlify treats the site as a plain static folder and routes break.
+# 🔗 Netlify Next.js plugin: https://docs.netlify.com/frameworks/next-js/overview/
+[[plugins]]
+  package = "@netlify/plugin-nextjs"
