@@ -1,0 +1,25 @@
+# 📘 WHAT THIS FILE DOES: Tells Docker which files to exclude from the build context.
+# Docker reads this before copying any files — excluded files never enter the image.
+# This keeps builds fast and prevents accidental inclusion of secrets or junk.
+# 🔗 .dockerignore reference: https://docs.docker.com/build/concepts/context/#dockerignore-files
+
+# Dependencies — reinstalled fresh inside the container
+node_modules/
+web/node_modules/
+project/node_modules/
+
+# Next.js build output — rebuilt inside the container
+web/.next/
+
+# Remotion config file — caused crashes; options are passed via CLI flags instead
+project/remotion.config.ts
+project/remotion.config.js
+
+# Local environment secrets — never goes in an image
+.env
+.env.local
+.env.*.local
+
+# Dev/OS junk
+.DS_Store
+*.log

@@ -35,6 +35,9 @@ RUN npm run build
 
 
 # ── Stage 4: Production runner ────────────────────────────────────────────────
+# 📘 ARG CACHEBUST forces Docker to invalidate all layers below this line when
+# its value changes. Set it to today's date to guarantee a clean rebuild.
+ARG CACHEBUST=2026-05-12
 # 📘 The official Remotion base image (ghcr.io/remotion-dev/base) ships with:
 # - The exact Chromium version Remotion expects
 # - All required system libraries (nss, drm, atk, etc.)
