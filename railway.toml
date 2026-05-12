@@ -1,0 +1,14 @@
+# 📘 WHAT THIS FILE DOES: Tells Railway how to build and run this app.
+# This file lives at the repo root so Railway uses the root-level Dockerfile,
+# which bundles both the Next.js app (web/) and Remotion renderer (project/).
+# 🔗 Railway config reference: https://docs.railway.com/reference/config-as-code
+
+[build]
+builder        = "dockerfile"
+dockerfilePath = "Dockerfile"
+
+[deploy]
+healthcheckPath    = "/"
+healthcheckTimeout = 120
+restartPolicyType  = "on_failure"
+restartPolicyMaxRetries = 3
