@@ -72,6 +72,9 @@ export async function POST(req: NextRequest) {
     // 📘 Build the full Remotion render command.
     // --duration-in-frames overrides the composition's default with the real video length.
     // --fps sets the frame rate to match the source video.
+    // 📘 --gl=swiftshader uses software rendering — required on cloud servers with no GPU.
+    // --concurrency=1 renders one frame at a time to stay within Railway's memory limits.
+    // These replace remotion.config.ts which was causing a crash on load.
     const command = [
       `cd "${remotionPath}"`,
       `&&`,
@@ -79,6 +82,8 @@ export async function POST(req: NextRequest) {
       `--props="${propsJson}"`,
       `--duration-in-frames=${videoInfo.durationFrames}`,
       `--fps=${videoInfo.fps}`,
+      `--gl=swiftshader`,
+      `--concurrency=1`,
     ].join(" ");
 
     // 📘 Run the render — this is the longest step, can take 30–120 seconds.

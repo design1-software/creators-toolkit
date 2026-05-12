@@ -91,6 +91,17 @@ COPY --from=builder /app/web/public           ./public
 COPY --from=project-deps /app/project/node_modules ./project/node_modules
 COPY project/ ./project/
 
+# 📘 Create a non-root user and run the app as that user.
+# Chromium's sandbox requires either --no-sandbox (insecure) OR a non-root user.
+# Running as non-root is the correct solution — the sandbox works properly and
+# we don't need to disable any security features.
+# 🔗 Linux users: https://www.w3schools.com/linux/linux_access_users.asp
+RUN groupadd -r appuser \
+  && useradd -r -g appuser -G audio,video appuser \
+  && chown -R appuser:appuser /app
+
+USER appuser
+
 # 📘 Railway injects its own PORT at runtime — Next.js standalone reads it automatically.
 EXPOSE 8080
 ENV HOSTNAME="0.0.0.0"

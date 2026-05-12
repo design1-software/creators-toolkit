@@ -72,7 +72,9 @@ export async function POST(req: NextRequest) {
     // 📘 Build the shell command that tells the Remotion CLI what to render.
     // We 'cd' into the Remotion project folder first so Remotion can find its config.
     // --props passes our data as JSON, --duration-in-frames sets the video length.
-    const command = `cd "${remotionProjectPath}" && npx remotion render PromoVideo "${outputPath}" --props='${props}' --duration-in-frames=${durationInFrames} --fps=30`;
+    // 📘 --gl=swiftshader: software GPU renderer, required on cloud servers with no GPU.
+    // --concurrency=1: one frame at a time to avoid out-of-memory on Railway free tier.
+    const command = `cd "${remotionProjectPath}" && npx remotion render PromoVideo "${outputPath}" --props='${props}' --duration-in-frames=${durationInFrames} --fps=30 --gl=swiftshader --concurrency=1`;
 
     // 📘 The render can take 1–5 minutes depending on video length and machine speed.
     // The timeout is set to 10 minutes (600,000 ms) to handle slower machines.
