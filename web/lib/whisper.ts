@@ -16,12 +16,11 @@ export type WordTimestamp = {
   end: number;   // end time in seconds
 };
 
-// 📘 Create one OpenAI client to reuse across calls — the "singleton pattern".
-// It reads OPENAI_API_KEY from environment variables automatically.
+// 📘 We create the OpenAI client INSIDE the function (not at module level) so it only
+// runs at request time — when Railway's env vars are available.
+// If we created it here at module level, Next.js would try to instantiate it during
+// the build step, where OPENAI_API_KEY doesn't exist yet, and the build would fail.
 // 🔗 Environment variables: https://www.w3schools.com/nodejs/nodejs_environment.asp
-const openai = new OpenAI({
-  apiKey: process.env.OPENAI_API_KEY,
-});
 
 // 📘 Sends an audio file to OpenAI Whisper and returns word-level timestamps.
 // Parameters:
@@ -33,6 +32,10 @@ export async function transcribeAudio(
   audioPath: string,
   _modelPath: string  // 📘 Prefixed with _ to signal "intentionally unused parameter"
 ): Promise<WordTimestamp[]> {
+
+  // 📘 Create the OpenAI client here — inside the function — so it only runs at
+  // request time when Railway has already injected the env vars.
+  const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 
   // 📘 fs.createReadStream() reads a file as a stream — efficient for large audio files
   // because it doesn't load the whole file into memory at once.
@@ -52,7 +55,7 @@ export async function transcribeAudio(
   // 📘 The API returns a 'words' array when timestamp_granularities includes "word".
   // Each entry has { word, start, end } — exactly our WordTimestamp shape.
   // We use the nullish coalescing operator (??) to fall back to an empty array if missing.
-  const words: WordTimestamp[] = (response.words ?? []).map((w) => ({
+  const words: WordTimestamp[] = (response.words ?? []).map((w: { word: string; start: number; end: number }) => ({
     word:  w.word.trim(),
     start: w.start,
     end:   w.end,
