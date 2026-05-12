@@ -71,10 +71,10 @@ COPY --from=builder /app/.next/standalone ./
 COPY --from=builder /app/.next/static     ./.next/static
 COPY --from=builder /app/public           ./public
 
-# 📘 EXPOSE tells Docker which port this container listens on.
-# Railway reads this to route traffic to the right port.
+# 📘 EXPOSE is documentation — it tells Railway which port to route traffic to.
+# We do NOT hardcode PORT here. Railway injects its own PORT environment variable
+# at runtime, and Next.js standalone reads it automatically.
 EXPOSE 3000
-ENV PORT=3000
 
 # 📘 HOSTNAME="0.0.0.0" makes the server accept connections from outside the container.
 # The default "localhost" would only accept connections from inside — the app would
