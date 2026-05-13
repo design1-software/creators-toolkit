@@ -277,9 +277,9 @@ const AudioVisualizer: React.FC<{ audioSrc: string }> = ({ audioSrc }) => {
   if (!audioData) return null;
 
   // 📘 numberOfSamples controls how many bars to draw.
-  // 64 buckets gives enough detail without making bars too thin at 1080px wide.
-  const NUMBER_OF_SAMPLES = 64;
-  const bars = visualizeAudio({
+  // 48 bars are wider and more visible than 64 at 1080px wide.
+  const NUMBER_OF_SAMPLES = 48;
+  const rawBars = visualizeAudio({
     audioData,
     frame,
     fps,
@@ -288,8 +288,14 @@ const AudioVisualizer: React.FC<{ audioSrc: string }> = ({ audioSrc }) => {
     smoothing: true,
   });
 
-  const BAR_HEIGHT_MAX = 180; // maximum bar height in pixels
-  const BAR_GAP        = 4;   // gap between bars in pixels
+  // 📘 Raw audio magnitudes cluster near zero for most frequencies — the result
+  // looks like flat lines. Raising each value to a fractional power (< 1) stretches
+  // small values upward while leaving loud peaks near their ceiling.
+  // e.g. 0.1^0.5 = 0.316 — a quiet frequency now renders at 31% height instead of 10%.
+  const bars = rawBars.map((m) => Math.pow(m, 0.5));
+
+  const BAR_HEIGHT_MAX = 400; // 400px out of 1920px tall frame (~21%) — clearly visible
+  const BAR_GAP        = 6;   // wider gap to match the wider bars
 
   return (
     // 📘 AbsoluteFill covers the full frame. We position the bars at the bottom
@@ -309,15 +315,17 @@ const AudioVisualizer: React.FC<{ audioSrc: string }> = ({ audioSrc }) => {
         }}
       >
         {bars.map((magnitude, i) => (
-          // 📘 Each bar's height is the magnitude (0–1) multiplied by the max pixel height.
-          // The gradient goes from the accent purple at the base to a semi-transparent top.
+          // 📘 Each bar's height is the boosted magnitude multiplied by the max pixel height.
+          // Gradient: solid bright purple at the base → lighter purple at the tip.
+          // boxShadow adds a soft glow so bars punch through the video behind them.
           <div
             key={i}
             style={{
               flex: 1,
               height: magnitude * BAR_HEIGHT_MAX,
-              background: "linear-gradient(to top, rgba(124,58,237,0.9), rgba(124,58,237,0.15))",
-              borderRadius: "2px 2px 0 0",
+              background: "linear-gradient(to top, rgba(139,92,246,1), rgba(196,167,255,0.85))",
+              borderRadius: "3px 3px 0 0",
+              boxShadow: "0 0 14px rgba(139,92,246,0.7)",
             }}
           />
         ))}
