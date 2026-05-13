@@ -16,7 +16,7 @@ const execAsync = promisify(exec);
 
 export async function POST(req: NextRequest) {
   try {
-    const { quote, author, style, jobId } = await req.json();
+    const { quote, author, style, jobId, audioSrc } = await req.json();
 
     if (!quote || !author || !style || !jobId) {
       return NextResponse.json(
@@ -70,6 +70,9 @@ export async function POST(req: NextRequest) {
       textColor: style.textColor ?? "#ffffff",
       animationStyle: style.animationStyle ?? "word-by-word",
       fontSize: style.fontSize ?? "large",
+      // 📘 audioSrc is the HTTP URL of the downloaded MP3 in public/uploads/.
+      // Empty string means no music — Remotion's <Audio> is conditionally rendered.
+      audioSrc: audioSrc ?? "",
     }).replace(/"/g, '\\"');
 
     // 📘 Shell out to the Remotion CLI inside the project folder.

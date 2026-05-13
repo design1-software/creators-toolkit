@@ -67,6 +67,7 @@ export const RemotionRoot: React.FC = () => {
           textColor: "#ffffff",
           animationStyle: "word-by-word",
           fontSize: "large",
+          audioSrc: "",
         } satisfies AnimatedQuoteProps}
       />
       {/* 📘 The PromoVideo composition — used for the Promo Video skill (Phase 4).

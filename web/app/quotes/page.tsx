@@ -20,6 +20,7 @@ type QuoteStyle = {
   animationStyle: "word-by-word" | "full-text";
   fontSize: "small" | "medium" | "large";
   durationSeconds: number;
+  musicPrompt?: string;
 };
 
 const STYLE_PRESETS = [
@@ -30,21 +31,30 @@ const STYLE_PRESETS = [
   "Elegant — refined, serif, muted tones",
 ];
 
-// 📘 The initial steps for the progress tracker — all start as "pending".
-// 'as const' tells TypeScript these exact string values will never change.
-const INITIAL_STEPS: Step[] = [
+// 📘 Steps when music is disabled — the shorter pipeline.
+const STEPS_NO_MUSIC: Step[] = [
   { id: "analyze", label: "Analyze quote mood", status: "pending" },
-  { id: "style", label: "Choose visual style", status: "pending" },
-  { id: "render", label: "Render video", status: "pending" },
-  { id: "done", label: "Ready to download", status: "pending" },
+  { id: "style",   label: "Choose visual style", status: "pending" },
+  { id: "render",  label: "Render video", status: "pending" },
+  { id: "done",    label: "Ready to download", status: "pending" },
+];
+
+// 📘 Steps when music is enabled — adds a Suno generation step before render.
+const STEPS_WITH_MUSIC: Step[] = [
+  { id: "analyze", label: "Analyze quote mood", status: "pending" },
+  { id: "style",   label: "Choose visual style", status: "pending" },
+  { id: "music",   label: "Generate background music", status: "pending" },
+  { id: "render",  label: "Render video", status: "pending" },
+  { id: "done",    label: "Ready to download", status: "pending" },
 ];
 
 export default function QuotesPage() {
   const [quote, setQuote] = useState("");
   const [author, setAuthor] = useState("");
   const [stylePreference, setStylePreference] = useState(STYLE_PRESETS[0]);
+  const [addMusic, setAddMusic] = useState(false);
   const [phase, setPhase] = useState<"input" | "processing" | "done">("input");
-  const [steps, setSteps] = useState<Step[]>(INITIAL_STEPS);
+  const [steps, setSteps] = useState<Step[]>(STEPS_NO_MUSIC);
   const [videoUrl, setVideoUrl] = useState<string | null>(null);
   const [quoteStyle, setQuoteStyle] = useState<QuoteStyle | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -60,7 +70,9 @@ export default function QuotesPage() {
   async function handleRender() {
     if (!quote.trim() || !author.trim()) return;
     setPhase("processing");
-    setSteps(INITIAL_STEPS);
+    // 📘 Choose the right step list based on whether music is enabled.
+    // We must set this before the pipeline starts so the tracker shows the correct steps.
+    setSteps(addMusic ? STEPS_WITH_MUSIC : STEPS_NO_MUSIC);
     setError(null);
     setVideoUrl(null);
 
@@ -86,7 +98,25 @@ export default function QuotesPage() {
       updateStep("analyze", { status: "done" });
       updateStep("style", { status: "done", detail: `${style.animationStyle} · ${style.durationSeconds}s` });
 
-      // ── Step 2: Render video ──
+      // ── Step 2 (optional): Generate background music via Suno ──
+      // 📘 We use a local variable so the audioSrc is available immediately in step 3
+      // without waiting for React's async state update to propagate.
+      let audioSrc = "";
+      if (addMusic) {
+        updateStep("music", { status: "running", detail: "Composing with Suno…" });
+        const jobId = uuidv4();
+        const musicRes = await fetch("/api/quotes/music", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ musicPrompt: style.musicPrompt, jobId }),
+        });
+        const musicData = await musicRes.json();
+        if (!musicRes.ok) throw new Error(musicData.error ?? "Music generation failed");
+        audioSrc = musicData.audioSrc;
+        updateStep("music", { status: "done", detail: "Track ready" });
+      }
+
+      // ── Step 3: Render video ──
       updateStep("render", { status: "running", detail: "Calling Remotion…" });
 
       const jobId = uuidv4();
@@ -94,7 +124,7 @@ export default function QuotesPage() {
       const renderRes = await fetch("/api/quotes/render", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ quote, author, style, jobId }),
+        body: JSON.stringify({ quote, author, style, jobId, audioSrc }),
       });
 
       const renderData = await renderRes.json();
@@ -117,7 +147,7 @@ export default function QuotesPage() {
 
   function handleReset() {
     setPhase("input");
-    setSteps(INITIAL_STEPS);
+    setSteps(addMusic ? STEPS_WITH_MUSIC : STEPS_NO_MUSIC);
     setVideoUrl(null);
     setQuoteStyle(null);
     setError(null);
@@ -213,6 +243,35 @@ export default function QuotesPage() {
               ))}
             </div>
           </div>
+
+          {/* ── Music toggle ── */}
+          {/* 📘 A toggle lets the user opt into Suno music generation.
+              It adds ~60-90s to the pipeline, so we make it opt-in rather than always-on. */}
+          <button
+            onClick={() => setAddMusic((v) => !v)}
+            className="w-full flex items-center justify-between px-4 py-3 rounded-lg text-sm transition-all"
+            style={{
+              background: addMusic ? "rgba(124,58,237,0.15)" : "var(--color-bg)",
+              border: `1px solid ${addMusic ? "var(--color-accent)" : "var(--color-border)"}`,
+              color: addMusic ? "var(--color-text)" : "var(--color-muted)",
+            }}
+          >
+            <span>🎵 Add background music</span>
+            <span
+              className="text-xs px-2 py-1 rounded-full font-medium"
+              style={{
+                background: addMusic ? "var(--color-accent)" : "var(--color-border)",
+                color: "white",
+              }}
+            >
+              {addMusic ? "ON" : "OFF"}
+            </span>
+          </button>
+          {addMusic && (
+            <p className="text-xs -mt-3" style={{ color: "var(--color-muted)" }}>
+              Claude picks a music prompt · Suno generates a matching instrumental · adds ~60–90s
+            </p>
+          )}
 
           <button
             onClick={handleRender}

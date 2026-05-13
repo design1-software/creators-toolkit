@@ -29,7 +29,8 @@ Required keys:
   "textColor": "#hexcode — quote text color (usually white or near-white)",
   "animationStyle": "word-by-word OR full-text",
   "fontSize": "small OR medium OR large — based on quote length (longer = smaller)",
-  "durationSeconds": integer between 15 and 30
+  "durationSeconds": integer between 15 and 30,
+  "musicPrompt": "A short Suno-style music prompt (10-20 words). Describe tempo, instruments, and mood. Examples: 'soft piano ambient reflective slow tempo minimal cinematic', 'energetic hip-hop beats punchy 120bpm urban confident', 'gentle acoustic guitar warm uplifting 80bpm folk'. NO vocals — instrumental only."
 }
 
 Choose gradients that are dark enough to ensure white text is readable.

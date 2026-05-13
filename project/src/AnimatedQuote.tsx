@@ -13,7 +13,17 @@ import {
   spring,          // Physics-based animation — creates bounce/ease effects
   interpolate,     // Maps one range of numbers to another (used for fading, scaling, etc.)
   Easing,          // Easing functions — control how animations accelerate/decelerate
+  Audio,           // 📘 Remotion's Audio component — plays a sound file during the video
 } from "remotion";
+// 📘 loadFont() from @remotion/google-fonts downloads and registers a font for use inside Remotion.
+// Great Vibes is a flowing calligraphic script — perfect for author attribution.
+// We call it once at module level so the font is ready before the first frame renders.
+// 🔗 Remotion Google Fonts: https://www.remotion.dev/docs/google-fonts
+import { loadFont } from "@remotion/google-fonts/GreatVibes";
+
+// 📘 Destructure 'fontFamily' so we can pass it directly to CSS fontFamily below.
+// 'fontFamily' is a string like "'Great Vibes'" — already properly quoted for CSS.
+const { fontFamily: scriptFontFamily } = loadFont();
 
 // 📘 This defines the "shape" of data this component expects to receive.
 // TypeScript uses types to catch mistakes — if you forget a prop, it will error.
@@ -27,6 +37,9 @@ export type AnimatedQuoteProps = {
   textColor: string;          // Color for the main quote text (usually white)
   animationStyle: "word-by-word" | "full-text"; // How the text enters the frame
   fontSize: "small" | "medium" | "large";       // Text size (adapts to quote length)
+  // 📘 audioSrc is optional — when provided, Remotion plays it as background music.
+  // When absent, the video renders silently (no music mode).
+  audioSrc?: string;
 };
 
 // 📘 Maps the fontSize prop to actual pixel values.
@@ -50,6 +63,7 @@ export const AnimatedQuote: React.FC<AnimatedQuoteProps> = ({
   textColor,
   animationStyle,
   fontSize,
+  audioSrc,
 }) => {
   // 📘 'useCurrentFrame()' returns which frame is being rendered right now (starts at 0).
   // When the video plays at 30fps, frame 30 = 1 second into the video.
@@ -130,6 +144,10 @@ export const AnimatedQuote: React.FC<AnimatedQuoteProps> = ({
         padding: "100px 80px",
       }}
     >
+      {/* 📘 <Audio> plays the background music track for the full duration of the video.
+          volume={0.35} keeps the music subtle so it doesn't overpower the visual.
+          We only render it when audioSrc is a non-empty string. */}
+      {audioSrc && <Audio src={audioSrc} volume={0.35} />}
       {/* ── Decorative accent bar — slides in from left ── */}
       <div
         style={{
@@ -237,15 +255,16 @@ export const AnimatedQuote: React.FC<AnimatedQuoteProps> = ({
             borderRadius: "1px",
           }}
         />
+        {/* 📘 Great Vibes is a calligraphic script font — gives the author attribution
+            an elegant, handwritten feel that contrasts nicely with the bold quote text.
+            We use the fontFamily string returned by loadFont() above. */}
         <p
           style={{
             color: accentColor,
-            fontSize: 34,
-            fontWeight: 500,
-            fontFamily: "Georgia, 'Times New Roman', serif",
-            fontStyle: "italic",
+            fontSize: 52,
+            fontFamily: scriptFontFamily,
             textAlign: "center",
-            letterSpacing: "0.04em",
+            letterSpacing: "0.02em",
           }}
         >
           — {author}
