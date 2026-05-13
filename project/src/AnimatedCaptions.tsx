@@ -41,6 +41,16 @@ export const AnimatedCaptions: React.FC<AnimatedCaptionsProps> = ({
   // 📘 Convert the current frame to seconds to compare with word timestamps.
   const currentTimeSeconds = frame / fps;
 
+  // 📘 Hide captions completely before the first word starts and after the last word ends.
+  // Without this guard, the window-calculation below falls back to index 0 once
+  // findIndex() returns -1 (no future word exists), causing the first 5 words to
+  // reappear and stay frozen on screen for the rest of the video.
+  const firstWord = words[0];
+  const lastWord  = words[words.length - 1];
+  if (!firstWord || !lastWord) return null;
+  if (currentTimeSeconds < firstWord.start) return null;
+  if (currentTimeSeconds > lastWord.end)    return null;
+
   // 📘 Find the index of the word currently being spoken.
   // findIndex() returns -1 when no word matches (gap between words).
   // 🔗 Array methods: https://www.w3schools.com/jsref/jsref_findindex.asp
@@ -49,6 +59,8 @@ export const AnimatedCaptions: React.FC<AnimatedCaptionsProps> = ({
   );
 
   // 📘 Build a window of words centred near the active word.
+  // During a gap between words (activeWordIndex === -1), we find the next upcoming
+  // word and anchor the window just before it so captions stay visible mid-sentence.
   // Math.max(0, ...) prevents a negative start index.
   const windowStart = Math.max(
     0,
