@@ -17,6 +17,7 @@ Given a video transcript with word-level timestamps, you identify the most impac
 
 You must respond with ONLY valid JSON matching this exact structure:
 {
+  "title": "3–5 WORD PUNCHY TITLE",
   "kineticPhrases": [
     { "text": "THE PHRASE", "startFrame": 45, "durationFrames": 45 }
   ],
@@ -28,6 +29,7 @@ You must respond with ONLY valid JSON matching this exact structure:
 }
 
 Rules:
+- title: 3–5 words MAX, ALL CAPS, hook-first (e.g. "BIRTHDAY NIGHT OUT", "WE'RE GOING IN"). This appears as a full-screen title card — it must be short and punchy, NOT a sentence.
 - Pick 4–8 kinetic phrases: short, punchy, high-energy words or phrases
 - Pick 4–8 Ken Burns zones: spread throughout the video, scale between 1.05–1.2
 - Ken Burns x/y: 0.0=left/top, 0.5=center, 1.0=right/bottom
@@ -66,7 +68,7 @@ export async function POST(req: NextRequest) {
 
     // 📘 Parse Claude's JSON response. We use try/catch because if Claude's output
     // is malformed, JSON.parse() will throw — we catch it and return a helpful error.
-    let parsed: { kineticPhrases: KineticPhrase[]; kenBurnsZones: KenBurnsZone[]; hookStrength: string; summary: string };
+    let parsed: { title: string; kineticPhrases: KineticPhrase[]; kenBurnsZones: KenBurnsZone[]; hookStrength: string; summary: string };
     try {
       // 📘 Remove any accidental markdown code fences Claude might add
       const cleaned = response.replace(/```json|```/g, "").trim();

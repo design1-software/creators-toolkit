@@ -38,7 +38,8 @@ export const RemotionRoot: React.FC = () => {
           words: [],
           kenBurnsZones: [],
           kineticPhrases: [],
-          summary: "A sample video for preview",
+          title: "SAMPLE VIDEO",
+          summary: "A sample video for preview in Remotion Studio.",
           hookStrength: "medium",
           introFrames: 90,
         } satisfies CaptionedVideoProps}

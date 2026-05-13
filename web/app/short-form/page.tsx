@@ -78,6 +78,7 @@ export default function ShortFormPage() {
     // function would still return the old values. Local variables update immediately.
     let currentSummary = "";
     let currentHookStrength = "";
+    let currentTitle = "";
 
     // ── Step 1: Upload ────────────────────────────────────────────────────────
     updateStep("upload", "running");
@@ -169,6 +170,7 @@ export default function ShortFormPage() {
       kineticPhrases = data.kineticPhrases;
       currentSummary = data.summary || "";
       currentHookStrength = data.hookStrength || "medium";
+      currentTitle = data.title || "";
       setSummary(currentSummary);
       setHookStrength(currentHookStrength);
       updateStep("enhance", "done", `${kineticPhrases.length} kinetic phrases · ${kenBurnsZones.length} Ken Burns zones · Hook: ${data.hookStrength}`);
@@ -193,6 +195,7 @@ export default function ShortFormPage() {
           // 📘 Pass Claude's analysis forward so Remotion can render the intro title card.
           summary: currentSummary,
           hookStrength: currentHookStrength,
+          title: currentTitle,
         }),
       });
       const data = await res.json();

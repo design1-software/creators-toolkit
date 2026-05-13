@@ -1,11 +1,11 @@
 // 📘 WHAT THIS FILE DOES: The main Remotion composition for short-form video enhancement.
 // It renders two sequences back-to-back using Remotion's Series component:
-//   1. IntroCard  — 3-second animated title card built from Claude's summary analysis
-//   2. Main video — Ken Burns zoom + AnimatedCaptions + kinetic text pops + branding
+//   1. IntroCard  — 3-second animated title card (short title + summary subtitle)
+//   2. MainFootage — Ken Burns zoom + captions + kinetic text pops + JLM watermark
 //
-// 📘 WHY Series?  Remotion's <Series> component resets useCurrentFrame() to 0 at the
-// start of each <Series.Sequence>. This means all kenBurnsZones and kineticPhrases
-// frame numbers (which are relative to the video start) stay correct without any math.
+// 📘 WHY Series?  Remotion's <Series> resets useCurrentFrame() to 0 at the start of
+// each <Series.Sequence>, so all kenBurnsZones and kineticPhrases frame numbers
+// (relative to video start) stay correct without any offset math.
 // 🔗 Remotion Series: https://www.remotion.dev/docs/series
 
 import React from "react";
@@ -19,52 +19,61 @@ import {
   spring,
   Series,
 } from "remotion";
+// 📘 @remotion/google-fonts loads a Google Font at render time and returns the
+// fontFamily string to use in your styles. Remotion handles delayRender/continueRender
+// automatically so the font is guaranteed to be loaded before the first frame renders.
+// 🔗 Remotion Google Fonts: https://www.remotion.dev/docs/google-fonts
+import { loadFont } from "@remotion/google-fonts/GreatVibes";
 import { AnimatedCaptions, type WordTimestamp } from "./AnimatedCaptions";
 
-// 📘 A KenBurnsZone defines one zoom effect — when it starts/ends, scale, and focal point.
+// 📘 loadFont() is called at module level (outside any component) so the font is
+// registered once and shared across all frames. The returned fontFamily string is
+// what you pass to CSS font-family.
+const { fontFamily: scriptFont } = loadFont("normal");
+
+// ─── Types ────────────────────────────────────────────────────────────────────
+
 export type KenBurnsZone = {
   startFrame: number;
   endFrame: number;
-  scale: number;  // 1.0 = no zoom, 1.15 = 15% zoom in
-  x: number;     // focal point: 0=left, 0.5=centre, 1=right
-  y: number;     // focal point: 0=top,  0.5=centre, 1=bottom
+  scale: number;
+  x: number;
+  y: number;
 };
 
-// 📘 A KineticPhrase is a high-impact phrase that fills the screen for emphasis.
 export type KineticPhrase = {
   text: string;
   startFrame: number;
   durationFrames: number;
 };
 
-// 📘 All props the composition accepts — passed in from the render command via --props.
 export type CaptionedVideoProps = {
   videoSrc: string;
   words: WordTimestamp[];
   kenBurnsZones: KenBurnsZone[];
   kineticPhrases: KineticPhrase[];
-  summary: string;       // Claude's one-sentence description of the video
-  hookStrength: string;  // "strong" | "medium" | "weak"
-  introFrames: number;   // how many frames the intro card occupies (default 90 = 3s)
+  title: string;        // 3–5 word ALL CAPS hook shown large on the intro card
+  summary: string;      // full sentence shown as a subtitle beneath the title
+  hookStrength: string; // "strong" | "medium" | "weak"
+  introFrames: number;  // frames the intro card occupies (90 = 3s at 30fps)
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
-// IntroCard — 3-second animated title card shown before the main footage
+// IntroCard
 // ─────────────────────────────────────────────────────────────────────────────
 
-// 📘 This is a separate React component used only inside <Series.Sequence>.
-// Keeping it separate makes CaptionedVideo easier to read and the intro easy to change.
 const IntroCard: React.FC<{
+  title: string;
   summary: string;
   hookStrength: string;
   introFrames: number;
-}> = ({ summary, hookStrength, introFrames }) => {
+}> = ({ title, summary, hookStrength, introFrames }) => {
   const frame = useCurrentFrame();
   const { fps } = useVideoConfig();
 
-  // 📘 Fade the entire card in over 12 frames (0.4s) and out over 12 frames at the end.
-  // interpolate() maps frame ranges to output values, like a keyframe timeline.
-  // 🔗 interpolate: https://www.remotion.dev/docs/interpolate
+  // 📘 Fade the whole card in over 12 frames and out over 12 frames at the end.
+  // The fade is applied to an inner wrapper — NOT to the AbsoluteFill — so the
+  // background colour stays solid and only the content animates.
   const opacity = interpolate(
     frame,
     [0, 12, introFrames - 12, introFrames],
@@ -72,129 +81,138 @@ const IntroCard: React.FC<{
     { extrapolateLeft: "clamp", extrapolateRight: "clamp" }
   );
 
-  // 📘 spring() animates the title text scaling up from 0.88 → 1 with a slight bounce.
-  // 'from' and 'to' set the start and end values; damping/stiffness control the feel.
-  const titleScale = spring({
+  // 📘 The title slides up slightly as it fades in — gives a polished entrance feel.
+  const contentY = interpolate(
     frame,
-    fps,
-    config: { damping: 16, stiffness: 140 },
-    from: 0.88,
-    to: 1,
-  });
+    [0, 20],
+    [36, 0],
+    { extrapolateLeft: "clamp", extrapolateRight: "clamp" }
+  );
 
-  // 📘 The "STRONG HOOK" badge springs in 8 frames after the title starts.
-  // Math.max(0, frame - 8) delays the animation start by 8 frames.
+  // 📘 "STRONG HOOK" badge springs in 10 frames after the title arrives.
   const badgeScale = hookStrength === "strong"
-    ? spring({
-        frame: Math.max(0, frame - 8),
-        fps,
-        config: { damping: 12, stiffness: 220 },
-        from: 0,
-        to: 1,
-      })
+    ? spring({ frame: Math.max(0, frame - 10), fps, config: { damping: 12, stiffness: 220 }, from: 0, to: 1 })
     : 0;
 
-  // 📘 Pick a font size that fits the summary text within the 1080px frame width.
-  // Shorter summaries can afford larger text; longer ones need to shrink.
-  const summaryFontSize =
-    summary.length < 40 ? 72
-    : summary.length < 70 ? 56
-    : 44;
-
   return (
+    // 📘 AbsoluteFill covers the full 1080×1920 frame with a solid background.
+    // Opacity is NOT on this element — putting opacity here would fade the background
+    // too, which looks wrong. Instead we apply it to the inner content wrapper.
     <AbsoluteFill
       style={{
-        // 📘 A subtle purple-tinted gradient gives the intro a premium, cinematic feel.
-        background: "linear-gradient(160deg, #0a0a0f 0%, #1a0830 50%, #0a0a0f 100%)",
-        display: "flex",
-        alignItems: "center",
-        justifyContent: "center",
-        flexDirection: "column",
-        opacity,
+        background: "linear-gradient(160deg, #0a0a0f 0%, #1a0830 55%, #0a0a0f 100%)",
       }}
     >
-      {/* ── Branding label (top-centre) ── */}
-      {/* 📘 Small, muted "CREATORS TOOLKIT" serves as a brand watermark on the intro.
-          letterSpacing: "0.25em" spreads the letters for a logo-like appearance. */}
+      {/* ── Branding label — top-centre ── */}
+      {/* 📘 position: absolute takes it out of flow so it doesn't affect flex centering below. */}
       <div
         style={{
           position: "absolute",
-          top: 80,
+          top: 90,
           left: 0,
           right: 0,
           textAlign: "center",
-          fontSize: 26,
-          fontFamily: "'Arial', sans-serif",
+          fontSize: 28,
           fontWeight: 600,
-          color: "rgba(255,255,255,0.35)",
+          fontFamily: "'Arial', sans-serif",
+          color: "rgba(255,255,255,0.5)",
           letterSpacing: "0.25em",
           textTransform: "uppercase",
+          opacity,
         }}
       >
         Creators Toolkit
       </div>
 
-      {/* ── Main title block ── */}
+      {/* ── Content wrapper — vertically centred with a full-height explicit div ── */}
+      {/* 📘 WHY an inner div instead of flex on AbsoluteFill?
+          AbsoluteFill applies position:absolute which removes it from layout flow.
+          Pairing display:flex + alignItems:center on a position:absolute element
+          can behave inconsistently in headless Chromium. An explicit inner div
+          with width/height:100% and display:flex gives reliable centering. */}
       <div
         style={{
-          padding: "0 80px",
-          textAlign: "center",
-          transform: `scale(${titleScale})`,
+          position: "absolute",
+          top: 0,
+          left: 0,
+          width: "100%",
+          height: "100%",
           display: "flex",
           flexDirection: "column",
           alignItems: "center",
-          gap: 32,
+          justifyContent: "center",
+          opacity,
+          transform: `translateY(${contentY}px)`,
         }}
       >
-        {/* 📘 "STRONG HOOK" badge — only shown when Claude rated the hook as strong.
-            spring() gives it a satisfying pop-in rather than an abrupt appearance. */}
+        {/* "STRONG HOOK" badge — only when Claude rated it strong */}
         {hookStrength === "strong" && (
           <div
             style={{
               transform: `scale(${badgeScale})`,
+              transformOrigin: "center center",
               backgroundColor: "#7c3aed",
               color: "#fff",
-              fontSize: 24,
+              fontSize: 26,
               fontWeight: 700,
-              padding: "10px 28px",
+              fontFamily: "'Arial Black', sans-serif",
+              padding: "10px 32px",
               borderRadius: 100,
               letterSpacing: "0.15em",
               textTransform: "uppercase",
-              fontFamily: "'Arial Black', sans-serif",
+              marginBottom: 48,
             }}
           >
             Strong Hook
           </div>
         )}
 
-        {/* 📘 The summary text from Claude. Font weight 900 = maximum boldness.
-            lineHeight 1.2 keeps multi-line text tight and impactful. */}
+        {/* 📘 Title — 3–5 word ALL CAPS hook from Claude. Large and punchy. */}
         <div
           style={{
-            fontSize: summaryFontSize,
+            fontSize: 96,
             fontWeight: 900,
             fontFamily: "'Arial Black', 'Impact', sans-serif",
             color: "#ffffff",
-            lineHeight: 1.2,
-            textShadow: "0 4px 24px rgba(124,58,237,0.5)",
+            textAlign: "center",
+            lineHeight: 1.1,
+            letterSpacing: "0.03em",
+            padding: "0 80px",
+            textShadow: "0 4px 32px rgba(124,58,237,0.6)",
+            marginBottom: 32,
+          }}
+        >
+          {title}
+        </div>
+
+        {/* 📘 Summary — full sentence, smaller, acts as subtitle context. */}
+        <div
+          style={{
+            fontSize: 36,
+            fontWeight: 400,
+            fontFamily: "'Arial', sans-serif",
+            color: "rgba(255,255,255,0.65)",
+            textAlign: "center",
+            lineHeight: 1.5,
+            padding: "0 100px",
+            fontStyle: "italic",
           }}
         >
           {summary}
         </div>
       </div>
 
-      {/* ── Accent line (bottom) ── */}
-      {/* 📘 A thin purple line anchors the design and echoes the brand accent colour. */}
+      {/* ── Purple accent line — bottom anchor ── */}
       <div
         style={{
           position: "absolute",
           bottom: 100,
           left: 120,
           right: 120,
-          height: 3,
+          height: 4,
           backgroundColor: "#7c3aed",
-          opacity: 0.7,
           borderRadius: 2,
+          opacity,
         }}
       />
     </AbsoluteFill>
@@ -202,39 +220,35 @@ const IntroCard: React.FC<{
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
-// BrandingMark — small persistent watermark on the main video footage
+// BrandingMark — "JLM" in Great Vibes script on the main footage
 // ─────────────────────────────────────────────────────────────────────────────
 
-// 📘 A lightweight overlay that stays visible throughout the main footage.
-// Positioned top-right so it doesn't clash with captions (bottom) or kinetic text (centre).
+// 📘 Great Vibes is a flowing calligraphy script loaded from Google Fonts via
+// @remotion/google-fonts. The loadFont() call at module level (above) registered it.
+// 'scriptFont' is the CSS font-family string Remotion returns after loading.
 const BrandingMark: React.FC = () => (
   <div
     style={{
       position: "absolute",
-      top: 52,
+      top: 48,
       right: 48,
-      fontSize: 22,
-      fontFamily: "'Arial', sans-serif",
-      fontWeight: 700,
-      color: "rgba(255,255,255,0.45)",
-      letterSpacing: "0.18em",
-      textTransform: "uppercase",
-      // 📘 text-shadow gives the text legibility against both light and dark backgrounds.
-      textShadow: "1px 1px 4px rgba(0,0,0,0.7)",
-      pointerEvents: "none", // this layer doesn't intercept mouse events
+      fontSize: 52,
+      fontFamily: scriptFont,
+      color: "rgba(255,255,255,0.5)",
+      // 📘 text-shadow gives legibility against both bright and dark backgrounds.
+      textShadow: "1px 2px 6px rgba(0,0,0,0.7)",
+      pointerEvents: "none",
+      lineHeight: 1,
     }}
   >
-    CT
+    JLM
   </div>
 );
 
 // ─────────────────────────────────────────────────────────────────────────────
-// MainFootage — Ken Burns + captions + kinetic phrases
+// MainFootage — Ken Burns + captions + kinetic phrases + branding
 // ─────────────────────────────────────────────────────────────────────────────
 
-// 📘 Separated into its own component so Series.Sequence can contain it cleanly.
-// Inside a Series.Sequence, useCurrentFrame() resets to 0 — so all startFrame /
-// endFrame values from Claude are correct without any offset math.
 const MainFootage: React.FC<{
   videoSrc: string;
   words: WordTimestamp[];
@@ -242,11 +256,9 @@ const MainFootage: React.FC<{
   kineticPhrases: KineticPhrase[];
 }> = ({ videoSrc, words, kenBurnsZones, kineticPhrases }) => {
   const frame = useCurrentFrame();
-  const { fps, width, height } = useVideoConfig();
+  const { fps } = useVideoConfig();
 
-  // ── Ken Burns Zoom ────────────────────────────────────────────────────────
-
-  // 📘 Find whether a Ken Burns zone is active at this frame.
+  // ── Ken Burns ─────────────────────────────────────────────────────────────
   const activeZone = kenBurnsZones.find(
     (z) => frame >= z.startFrame && frame <= z.endFrame
   );
@@ -255,8 +267,6 @@ const MainFootage: React.FC<{
   let transformOrigin = "50% 50%";
 
   if (activeZone) {
-    // 📘 Easing.bezier creates a smooth ease-in-out curve, like CSS ease-in-out.
-    // interpolate() maps the frame position inside the zone to a scale value.
     scale = interpolate(
       frame,
       [activeZone.startFrame, activeZone.endFrame],
@@ -266,22 +276,15 @@ const MainFootage: React.FC<{
     transformOrigin = `${activeZone.x * 100}% ${activeZone.y * 100}%`;
   }
 
-  // ── Kinetic Phrase Detection ──────────────────────────────────────────────
-
+  // ── Kinetic phrases ───────────────────────────────────────────────────────
   const activePhrase = kineticPhrases.find(
     (p) => frame >= p.startFrame && frame < p.startFrame + p.durationFrames
   );
 
-  // 📘 spring() gives the kinetic text a satisfying "pop" entrance.
   const phraseEntrance = activePhrase
-    ? spring({
-        frame: frame - activePhrase.startFrame,
-        fps,
-        config: { damping: 14, stiffness: 180 },
-      })
+    ? spring({ frame: frame - activePhrase.startFrame, fps, config: { damping: 14, stiffness: 180 } })
     : 0;
 
-  // 📘 Vignette intensity pulses up during kinetic moments for dramatic effect.
   const vignettePulse = activePhrase
     ? interpolate(
         frame - activePhrase.startFrame,
@@ -293,23 +296,12 @@ const MainFootage: React.FC<{
 
   return (
     <AbsoluteFill style={{ backgroundColor: "#000" }}>
-
-      {/* ── Layer 1: Source video with Ken Burns transform ── */}
-      <AbsoluteFill
-        style={{
-          transform: `scale(${scale})`,
-          transformOrigin,
-          willChange: "transform",
-        }}
-      >
-        {/* 📘 <Video> renders the source MP4. Remotion syncs playback to the current frame. */}
-        <Video
-          src={videoSrc}
-          style={{ width: "100%", height: "100%", objectFit: "cover" }}
-        />
+      {/* Layer 1: Video + Ken Burns */}
+      <AbsoluteFill style={{ transform: `scale(${scale})`, transformOrigin, willChange: "transform" }}>
+        <Video src={videoSrc} style={{ width: "100%", height: "100%", objectFit: "cover" }} />
       </AbsoluteFill>
 
-      {/* ── Layer 2: Vignette ── */}
+      {/* Layer 2: Vignette */}
       <AbsoluteFill
         style={{
           background: "radial-gradient(ellipse at center, transparent 40%, rgba(0,0,0,0.7) 100%)",
@@ -318,21 +310,15 @@ const MainFootage: React.FC<{
         }}
       />
 
-      {/* ── Layer 3: Branding mark (always visible) ── */}
+      {/* Layer 3: JLM branding mark */}
       <BrandingMark />
 
-      {/* ── Layer 4: Captions (hidden during kinetic phrases to avoid visual clash) ── */}
+      {/* Layer 4: Captions (hidden during kinetic phrases) */}
       {!activePhrase && <AnimatedCaptions words={words} fontSize={64} />}
 
-      {/* ── Layer 5: Kinetic text pop ── */}
+      {/* Layer 5: Kinetic text pop */}
       {activePhrase && (
-        <AbsoluteFill
-          style={{
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-          }}
-        >
+        <AbsoluteFill style={{ display: "flex", alignItems: "center", justifyContent: "center" }}>
           <div
             style={{
               fontSize: 88,
@@ -344,8 +330,7 @@ const MainFootage: React.FC<{
               letterSpacing: "0.04em",
               lineHeight: 1.1,
               padding: "0 60px",
-              textShadow:
-                "0 0 40px rgba(255,255,255,0.3), 4px 4px 0px rgba(0,0,0,0.8)",
+              textShadow: "0 0 40px rgba(255,255,255,0.3), 4px 4px 0px rgba(0,0,0,0.8)",
               transform: `scale(${phraseEntrance})`,
               opacity: phraseEntrance,
             }}
@@ -354,7 +339,6 @@ const MainFootage: React.FC<{
           </div>
         </AbsoluteFill>
       )}
-
     </AbsoluteFill>
   );
 };
@@ -363,40 +347,34 @@ const MainFootage: React.FC<{
 // CaptionedVideo — root composition
 // ─────────────────────────────────────────────────────────────────────────────
 
-// 📘 The main export used by Root.tsx. Remotion calls this once per frame.
-// Series runs IntroCard for 'introFrames' frames, then switches to MainFootage.
 export const CaptionedVideo: React.FC<CaptionedVideoProps> = ({
   videoSrc,
   words,
   kenBurnsZones,
   kineticPhrases,
+  title,
   summary,
   hookStrength,
   introFrames,
 }) => {
-  // 📘 durationInFrames is the full composition length — intro + video footage.
-  // We use it to tell MainFootage how long it runs so Series can size the sequence.
   const { durationInFrames } = useVideoConfig();
   const mainFrames = durationInFrames - introFrames;
 
   return (
-    // 📘 AbsoluteFill fills the full 1080×1920 frame. Series stacks sequences in time.
     <AbsoluteFill>
       <Series>
-        {/* ── Sequence 1: Intro title card ── */}
-        {/* 📘 Inside this sequence, useCurrentFrame() runs from 0 to introFrames-1. */}
+        {/* 📘 Sequence 1: Intro card. useCurrentFrame() runs 0 → introFrames-1 here. */}
         <Series.Sequence durationInFrames={introFrames}>
           <IntroCard
+            title={title}
             summary={summary}
             hookStrength={hookStrength}
             introFrames={introFrames}
           />
         </Series.Sequence>
 
-        {/* ── Sequence 2: Main footage ── */}
-        {/* 📘 Inside this sequence, useCurrentFrame() resets to 0 — frame 0 = video start.
-            All kenBurnsZones and kineticPhrases startFrame values are relative to the
-            video start, so they match useCurrentFrame() here with no offset needed. */}
+        {/* 📘 Sequence 2: Main footage. useCurrentFrame() resets to 0 here, so all
+            kenBurnsZones and kineticPhrases startFrame values align with the video. */}
         <Series.Sequence durationInFrames={mainFrames}>
           <MainFootage
             videoSrc={videoSrc}

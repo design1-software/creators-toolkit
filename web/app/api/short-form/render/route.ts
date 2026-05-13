@@ -25,6 +25,7 @@ export async function POST(req: NextRequest) {
       videoInfo,
       summary,
       hookStrength,
+      title,
     }: {
       jobId: string;
       filePath: string;
@@ -34,6 +35,7 @@ export async function POST(req: NextRequest) {
       videoInfo: { durationFrames: number; fps: number };
       summary: string;
       hookStrength: string;
+      title: string;
     } = await req.json();
 
     // 📘 The intro title card runs for 3 seconds at 30fps before the main footage begins.
@@ -78,6 +80,9 @@ export async function POST(req: NextRequest) {
       kenBurnsZones,
       kineticPhrases,
       // 📘 Claude's creative analysis — drives the 3-second intro title card.
+      // title: 3-5 word punchy ALL CAPS hook shown large on the intro card.
+      // summary: full sentence shown smaller beneath it.
+      title: title ?? "",
       summary: summary ?? "",
       hookStrength: hookStrength ?? "medium",
       // 📘 How many frames the intro occupies — lets CaptionedVideo split its Series sequences.
