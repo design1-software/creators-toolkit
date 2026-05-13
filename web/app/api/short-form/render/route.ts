@@ -1,8 +1,8 @@
 // 📘 WHAT THIS FILE DOES: Triggers the Remotion CLI to render the final enhanced video.
-// It copies the video and captions to the Remotion project's public folder,
-// then runs 'npx remotion render CaptionedVideo' with all the props.
+// It passes the uploaded video's HTTP URL directly to the Remotion composition,
+// then runs 'npx remotion render src/index.ts CaptionedVideo' with all the props.
 // URL: POST /api/short-form/render
-// Returns: { outputPath } path to the finished MP4
+// Returns: { url, fileName } public URL of the finished MP4
 
 import { NextRequest, NextResponse } from "next/server";
 import path from "path";
@@ -37,16 +37,6 @@ export async function POST(req: NextRequest) {
       throw new Error("REMOTION_PROJECT_PATH is not set in .env.local");
     }
 
-    // 📘 Copy the uploaded video into the Remotion project's public/ folder.
-    // Remotion can only serve files from its own public/ directory.
-    const remotionPublic = path.join(remotionPath, "public");
-    fs.mkdirSync(remotionPublic, { recursive: true });
-
-    const videoExt = path.extname(filePath);
-    const remotionVideoName = `${jobId}${videoExt}`;
-    const remotionVideoPath = path.join(remotionPublic, remotionVideoName);
-    fs.copyFileSync(filePath, remotionVideoPath);
-
     // 📘 Save the rendered MP4 directly into the web app's public/ folder
     // so the browser can stream or download it via a normal URL.
     // path.join combines directory segments safely for any OS.
@@ -56,10 +46,22 @@ export async function POST(req: NextRequest) {
     const outputFileName = `${jobId}_enhanced.mp4`;
     const outputPath = path.join(outputDir, outputFileName);
 
-    // 📘 Build the props object. This gets passed to CaptionedVideo as JSON.
-    // '/' prefix because Remotion serves from its public/ folder at runtime.
+    // 📘 Build the full URL for the uploaded video so Remotion's Chromium renderer
+    // can fetch it directly from the Next.js server.
+    //
+    // WHY NOT copy to Remotion's public/ folder?
+    // Remotion caches its bundle in a temp directory after the first render.
+    // Files added to project/public/ AFTER the bundle was created are invisible —
+    // the bundle's copy of public/ is frozen at bundle time. Fetching via HTTP
+    // bypasses the bundle entirely and always hits the live Next.js file server.
+    //
+    // PORT is the port Next.js is listening on (Railway sets this via $PORT).
+    const videoFileName = path.basename(filePath); // e.g. "abc123.mp4"
+    const port = process.env.PORT || "8080";
     const props = {
-      videoSrc: `/${remotionVideoName}`,
+      // 📘 Full HTTP URL — Chromium treats this like any web request.
+      // Next.js serves public/uploads/ at /uploads/... so this resolves to the file on disk.
+      videoSrc: `http://localhost:${port}/uploads/${videoFileName}`,
       words,
       kenBurnsZones,
       kineticPhrases,
