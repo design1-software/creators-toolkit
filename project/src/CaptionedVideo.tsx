@@ -276,9 +276,10 @@ const AudioVisualizer: React.FC<{ audioSrc: string }> = ({ audioSrc }) => {
   const audioData = useAudioData(audioSrc);
   if (!audioData) return null;
 
-  // 📘 numberOfSamples controls how many bars to draw.
-  // 48 bars are wider and more visible than 64 at 1080px wide.
-  const NUMBER_OF_SAMPLES = 48;
+  // 📘 numberOfSamples MUST be a power of two (32, 64, 128…) — visualizeAudio() uses
+  // an FFT internally and throws if the value isn't a valid FFT bin count.
+  // 32 gives wider, chunkier bars that read well at 1080px wide.
+  const NUMBER_OF_SAMPLES = 32;
   const rawBars = visualizeAudio({
     audioData,
     frame,
