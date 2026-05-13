@@ -24,6 +24,10 @@ import {
 // automatically so the font is guaranteed to be loaded before the first frame renders.
 // 🔗 Remotion Google Fonts: https://www.remotion.dev/docs/google-fonts
 import { loadFont } from "@remotion/google-fonts/GreatVibes";
+// 📘 useAudioData() fetches and decodes the audio file so Remotion knows every sample.
+// visualizeAudio() turns that sample data into per-frame frequency bar heights.
+// 🔗 @remotion/media-utils: https://www.remotion.dev/docs/media-utils/use-audio-data
+import { useAudioData, visualizeAudio } from "@remotion/media-utils";
 import { AnimatedCaptions, type WordTimestamp } from "./AnimatedCaptions";
 
 // 📘 loadFont() is called at module level (outside any component) so the font is
@@ -56,6 +60,9 @@ export type CaptionedVideoProps = {
   summary: string;      // full sentence shown as a subtitle beneath the title
   hookStrength: string; // "strong" | "medium" | "weak"
   introFrames: number;  // frames the intro card occupies (90 = 3s at 30fps)
+  // 📘 HTTP URL for the normalized WAV — empty string disables the audio visualizer.
+  // Remotion's useAudioData() fetches this file during rendering to read frequency data.
+  audioSrc?: string;
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -246,6 +253,80 @@ const BrandingMark: React.FC = () => (
 );
 
 // ─────────────────────────────────────────────────────────────────────────────
+// AudioVisualizer — frequency bar graph anchored to the bottom of the frame
+// ─────────────────────────────────────────────────────────────────────────────
+
+// 📘 useAudioData() is a Remotion hook that fetches and decodes an audio file.
+// It calls delayRender() internally so Remotion waits for the file before
+// rendering the first frame — no manual preloading needed.
+//
+// visualizeAudio() converts the decoded audio into an array of bar heights
+// (one per frequency bucket) for the current frame. We render each as a
+// vertical bar at the bottom of the screen.
+//
+// WHY at the bottom? The caption text sits in the lower third of the frame.
+// Bars grow upward from the very bottom so they sit behind/beneath the captions
+// without blocking faces or kinetic text which are centred vertically.
+const AudioVisualizer: React.FC<{ audioSrc: string }> = ({ audioSrc }) => {
+  const frame = useCurrentFrame();
+  const { fps } = useVideoConfig();
+
+  // 📘 useAudioData() returns null while the file is still loading.
+  // We render nothing until it resolves — Remotion holds the frame via delayRender.
+  const audioData = useAudioData(audioSrc);
+  if (!audioData) return null;
+
+  // 📘 numberOfSamples controls how many bars to draw.
+  // 64 buckets gives enough detail without making bars too thin at 1080px wide.
+  const NUMBER_OF_SAMPLES = 64;
+  const bars = visualizeAudio({
+    audioData,
+    frame,
+    fps,
+    numberOfSamples: NUMBER_OF_SAMPLES,
+    // 📘 smoothing reduces frame-to-frame jitter so bars feel fluid not chaotic.
+    smoothing: true,
+  });
+
+  const BAR_HEIGHT_MAX = 180; // maximum bar height in pixels
+  const BAR_GAP        = 4;   // gap between bars in pixels
+
+  return (
+    // 📘 AbsoluteFill covers the full frame. We position the bars at the bottom
+    // using absolute positioning so they don't affect the flex layout above.
+    <AbsoluteFill style={{ pointerEvents: "none" }}>
+      <div
+        style={{
+          position: "absolute",
+          bottom: 0,
+          left: 0,
+          right: 0,
+          height: BAR_HEIGHT_MAX,
+          display: "flex",
+          alignItems: "flex-end",
+          gap: BAR_GAP,
+          padding: "0 0",
+        }}
+      >
+        {bars.map((magnitude, i) => (
+          // 📘 Each bar's height is the magnitude (0–1) multiplied by the max pixel height.
+          // The gradient goes from the accent purple at the base to a semi-transparent top.
+          <div
+            key={i}
+            style={{
+              flex: 1,
+              height: magnitude * BAR_HEIGHT_MAX,
+              background: "linear-gradient(to top, rgba(124,58,237,0.9), rgba(124,58,237,0.15))",
+              borderRadius: "2px 2px 0 0",
+            }}
+          />
+        ))}
+      </div>
+    </AbsoluteFill>
+  );
+};
+
+// ─────────────────────────────────────────────────────────────────────────────
 // MainFootage — Ken Burns + captions + kinetic phrases + branding
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -254,7 +335,8 @@ const MainFootage: React.FC<{
   words: WordTimestamp[];
   kenBurnsZones: KenBurnsZone[];
   kineticPhrases: KineticPhrase[];
-}> = ({ videoSrc, words, kenBurnsZones, kineticPhrases }) => {
+  audioSrc?: string;
+}> = ({ videoSrc, words, kenBurnsZones, kineticPhrases, audioSrc }) => {
   const frame = useCurrentFrame();
   const { fps } = useVideoConfig();
 
@@ -313,10 +395,14 @@ const MainFootage: React.FC<{
       {/* Layer 3: JLM branding mark */}
       <BrandingMark />
 
-      {/* Layer 4: Captions (hidden during kinetic phrases) */}
+      {/* Layer 4: Audio frequency visualizer — only rendered when audioSrc is provided */}
+      {/* 📘 Renders behind captions so text stays readable, but above the vignette */}
+      {audioSrc && <AudioVisualizer audioSrc={audioSrc} />}
+
+      {/* Layer 5: Captions (hidden during kinetic phrases) */}
       {!activePhrase && <AnimatedCaptions words={words} fontSize={64} />}
 
-      {/* Layer 5: Kinetic text pop */}
+      {/* Layer 6: Kinetic text pop */}
       {activePhrase && (
         <AbsoluteFill style={{ display: "flex", alignItems: "center", justifyContent: "center" }}>
           <div
@@ -356,6 +442,7 @@ export const CaptionedVideo: React.FC<CaptionedVideoProps> = ({
   summary,
   hookStrength,
   introFrames,
+  audioSrc,
 }) => {
   const { durationInFrames } = useVideoConfig();
   const mainFrames = durationInFrames - introFrames;
@@ -381,6 +468,7 @@ export const CaptionedVideo: React.FC<CaptionedVideoProps> = ({
             words={words}
             kenBurnsZones={kenBurnsZones}
             kineticPhrases={kineticPhrases}
+            audioSrc={audioSrc}
           />
         </Series.Sequence>
       </Series>

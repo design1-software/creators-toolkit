@@ -26,6 +26,7 @@ export async function POST(req: NextRequest) {
       summary,
       hookStrength,
       title,
+      audioPath,
     }: {
       jobId: string;
       filePath: string;
@@ -36,6 +37,9 @@ export async function POST(req: NextRequest) {
       summary: string;
       hookStrength: string;
       title: string;
+      // 📘 audioPath is an absolute server-side path to the normalized WAV file.
+      // We convert it to an HTTP URL so Remotion's Chromium renderer can fetch it.
+      audioPath?: string;
     } = await req.json();
 
     // 📘 The intro title card runs for 3 seconds at 30fps before the main footage begins.
@@ -70,6 +74,14 @@ export async function POST(req: NextRequest) {
     // PORT is the port Next.js is listening on (Railway sets this via $PORT).
     const videoFileName = path.basename(filePath); // e.g. "abc123.mp4"
     const port = process.env.PORT || "8080";
+
+    // 📘 Convert the server-side audioPath to an HTTP URL so Remotion's Chromium can fetch it.
+    // The /api/uploads/ route serves both video and audio (WAV) files from public/uploads/.
+    // We use path.basename() to strip the absolute directory prefix — Remotion only needs the filename.
+    const audioSrc = audioPath
+      ? `http://localhost:${port}/api/uploads/${path.basename(audioPath)}`
+      : "";
+
     const props = {
       // 📘 Full HTTP URL pointing to our /api/uploads/ route handler.
       // We cannot use /uploads/ (static) because Next.js standalone caches a 404
@@ -87,6 +99,9 @@ export async function POST(req: NextRequest) {
       hookStrength: hookStrength ?? "medium",
       // 📘 How many frames the intro occupies — lets CaptionedVideo split its Series sequences.
       introFrames: INTRO_FRAMES,
+      // 📘 HTTP URL for the normalized WAV — Remotion's useAudioData() fetches this at render time.
+      // Empty string means no audio visualizer (fallback for older jobs without audioPath).
+      audioSrc,
     };
 
     // 📘 JSON.stringify the props, then escape double-quotes for shell safety.

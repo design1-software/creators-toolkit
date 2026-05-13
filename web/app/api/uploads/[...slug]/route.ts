@@ -22,6 +22,9 @@ const MIME_TYPES: Record<string, string> = {
   ".mkv":  "video/x-matroska",
   ".m4v":  "video/mp4",
   ".3gp":  "video/3gpp",
+  // 📘 WAV is the normalized audio format produced by FFmpeg in the analyze step.
+  // Remotion's useAudioData() fetches this file via HTTP, so the route must serve it.
+  ".wav":  "audio/wav",
 };
 
 // 📘 Converts a Node.js fs.ReadStream into a Web-standard ReadableStream safely.

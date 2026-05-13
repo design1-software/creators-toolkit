@@ -196,6 +196,9 @@ export default function ShortFormPage() {
           summary: currentSummary,
           hookStrength: currentHookStrength,
           title: currentTitle,
+          // 📘 audioPath is the absolute path to the normalized WAV from the analyze step.
+          // The render route converts it to an HTTP URL so Remotion's useAudioData() can fetch it.
+          audioPath,
         }),
       });
       const data = await res.json();

@@ -42,6 +42,9 @@ export const RemotionRoot: React.FC = () => {
           summary: "A sample video for preview in Remotion Studio.",
           hookStrength: "medium",
           introFrames: 90,
+          // 📘 Empty string disables the audio visualizer in Remotion Studio preview.
+          // The real audioSrc (HTTP URL to the WAV) is passed at render time.
+          audioSrc: "",
         } satisfies CaptionedVideoProps}
       />
       {/* 📘 The AnimatedQuote composition — used for the Animated Quotes skill (Phase 3).
