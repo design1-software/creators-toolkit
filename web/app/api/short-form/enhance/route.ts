@@ -10,14 +10,11 @@
 import { NextRequest, NextResponse } from "next/server";
 import fs from "fs";
 import path from "path";
-import { exec } from "child_process";
-import { promisify } from "util";
 import { sendMessage } from "@/lib/claude";
 import type { ContentBlock } from "@/lib/claude";
+import { runFFmpeg } from "@/lib/ffmpeg";
 import type { WordTimestamp } from "@/lib/whisper";
 import type { KenBurnsZone, KineticPhrase, LowerThird } from "@/lib/types";
-
-const execAsync = promisify(exec);
 
 // 📘 The system prompt tells Claude exactly what role to play and what to output.
 // We ask for JSON so we can parse it reliably — no guessing at the format.
@@ -95,60 +92,54 @@ export async function POST(req: NextRequest) {
     const frameBlocks: ContentBlock[] = [];
 
     if (filePath && fs.existsSync(filePath)) {
-      try {
-        framesDir = `/tmp/frames_${Date.now()}`;
-        fs.mkdirSync(framesDir, { recursive: true });
+      framesDir = `/tmp/frames_${Date.now()}`;
+      fs.mkdirSync(framesDir, { recursive: true });
 
-        // 📘 Calculate frame interval to get ~10 frames spread across the whole video.
-        // Math.max(2, ...) ensures at least one frame every 2 seconds on very short clips.
-        const interval = Math.max(2, Math.floor(videoInfo.duration / 10));
+      // 📘 Calculate frame interval to get ~10 frames spread across the whole video.
+      // Math.max(2, ...) ensures at least one frame every 2 seconds on very short clips.
+      const interval = Math.max(2, Math.floor(videoInfo.duration / 10));
 
-        // 📘 FFmpeg flags:
-        // -vf "fps=1/N" — output 1 frame every N seconds
-        // scale=480:-1  — resize to 480px wide (small enough for fast API upload)
-        // -frames:v 10  — hard cap at 10 frames
-        // -q:v 4        — JPEG quality (lower = better; 4 is a good size/quality trade-off)
-        await execAsync(
-          `ffmpeg -i "${filePath}" -vf "fps=1/${interval},scale=480:-1" -frames:v 10 -q:v 4 "${framesDir}/frame_%03d.jpg" -y`,
-          { timeout: 30000 }
-        );
+      // 📘 runFFmpeg() reads FFMPEG_PATH from the environment — the same binary
+      // used everywhere else in this project (analyze, audio normalization, etc.).
+      // Flags:
+      //   -vf "fps=1/N" — one frame every N seconds
+      //   scale=480:-1  — 480px wide, preserve aspect ratio (fast upload, enough detail)
+      //   -frames:v 10  — hard cap at 10 frames regardless of video length
+      //   -q:v 4        — JPEG quality (4 is a good size/quality balance)
+      //   -y            — overwrite output without prompting
+      await runFFmpeg(
+        `ffmpeg -i "${filePath}" -vf "fps=1/${interval},scale=480:-1" -frames:v 10 -q:v 4 "${framesDir}/frame_%03d.jpg" -y`
+      );
 
-        // 📘 Build one header text block, then alternate image + time-label blocks.
-        // Claude processes interleaved text and images well — the label anchors each
-        // frame to a position in the video timeline.
-        const frameFiles = fs.readdirSync(framesDir)
-          .filter((f) => f.endsWith(".jpg"))
-          .sort();
+      // 📘 Build one header block, then alternate image + timestamp label for each frame.
+      const frameFiles = fs.readdirSync(framesDir)
+        .filter((f) => f.endsWith(".jpg"))
+        .sort();
 
-        if (frameFiles.length > 0) {
+      if (frameFiles.length > 0) {
+        frameBlocks.push({
+          type: "text",
+          text: "Visual keyframes from the video (use subject/face positions for Ken Burns x/y):",
+        });
+
+        for (let i = 0; i < frameFiles.length; i++) {
+          const framePath = path.join(framesDir, frameFiles[i]);
+          const frameTimeSeconds = i * interval;
+          const frameNumber = Math.round(frameTimeSeconds * videoInfo.fps);
+
+          frameBlocks.push({
+            type: "image",
+            source: {
+              type: "base64",
+              media_type: "image/jpeg",
+              data: fs.readFileSync(framePath).toString("base64"),
+            },
+          });
           frameBlocks.push({
             type: "text",
-            text: "Visual keyframes from the video (use subject/face positions for Ken Burns x/y):",
+            text: `↑ t=${frameTimeSeconds}s (frame ${frameNumber})`,
           });
-
-          for (let i = 0; i < frameFiles.length; i++) {
-            const framePath = path.join(framesDir, frameFiles[i]);
-            const frameTimeSeconds = i * interval;
-            const frameNumber = Math.round(frameTimeSeconds * videoInfo.fps);
-
-            frameBlocks.push({
-              type: "image",
-              source: {
-                type: "base64",
-                media_type: "image/jpeg",
-                data: fs.readFileSync(framePath).toString("base64"),
-              },
-            });
-            frameBlocks.push({
-              type: "text",
-              text: `↑ t=${frameTimeSeconds}s (frame ${frameNumber})`,
-            });
-          }
         }
-      } catch (frameError) {
-        // 📘 Frame extraction is best-effort — if FFmpeg fails for any reason
-        // (codec issue, corrupt file, timeout) we log and continue with text-only.
-        console.warn("[/api/short-form/enhance] Frame extraction failed, using text-only:", frameError);
       }
     }
 
