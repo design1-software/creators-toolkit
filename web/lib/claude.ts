@@ -5,17 +5,22 @@
 
 import Anthropic from "@anthropic-ai/sdk";
 
-// 📘 'const' creates a variable that won't be reassigned.
-// We create ONE Anthropic client here and reuse it across the whole app.
-// This is called the "singleton pattern" — one instance shared everywhere.
-// Validate the key at startup so a missing env var produces a clear error immediately
-// rather than a confusing "authentication failed" 401 on the first API call.
-const apiKey = process.env.ANTHROPIC_API_KEY;
-if (!apiKey) {
-  throw new Error("ANTHROPIC_API_KEY is not set. Add it to .env.local and restart the server.");
-}
+// 📘 Lazy-initialize the Anthropic client on first use, not at module load.
+// Module-level code runs during 'next build' (page data collection), but secrets
+// like ANTHROPIC_API_KEY are only injected at runtime — not in the build container.
+// A module-level throw breaks the build even if the key exists in production.
+// Checking inside the function means the error fires at request time, not build time.
+let _anthropic: Anthropic | null = null;
 
-const anthropic = new Anthropic({ apiKey });
+function getClient(): Anthropic {
+  if (_anthropic) return _anthropic;
+  const apiKey = process.env.ANTHROPIC_API_KEY;
+  if (!apiKey) {
+    throw new Error("ANTHROPIC_API_KEY is not set. Add it to your environment variables.");
+  }
+  _anthropic = new Anthropic({ apiKey });
+  return _anthropic;
+}
 
 // 📘 A TextBlock carries plain text inside a multipart message.
 // Used when a message contains both text and images at the same time.
@@ -67,7 +72,7 @@ export async function sendMessage(
   // 📘 'await' pauses here until the API responds, then continues.
   // We're calling Claude's messages.create() endpoint — it's like sending a text
   // and waiting for the reply.
-  const response = await anthropic.messages.create({
+  const response = await getClient().messages.create({
     model: "claude-sonnet-4-6",   // which Claude model to use (latest Sonnet)
     max_tokens: 2048,              // maximum length of Claude's reply
     system,                        // the instructions that define Claude's behavior
