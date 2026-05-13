@@ -15,6 +15,18 @@ const nextConfig: NextConfig = {
   turbopack: {
     root: __dirname, // '__dirname' = the absolute path of this config file's directory
   },
+
+  experimental: {
+    // 📘 WHY THIS IS NEEDED: In Next.js 16, any POST request with a multipart/form-data
+    // content type is treated as a "possible Server Action" and routed through the
+    // Server Action body parser — which has a default limit of 1MB. Video uploads
+    // far exceed that, causing a silent 400 with an empty response body.
+    // Setting bodySizeLimit to '500mb' raises the cap so video uploads succeed.
+    // 🔗 Server Actions bodySizeLimit: https://nextjs.org/docs/app/api-reference/config/next-config-js/serverActions
+    serverActions: {
+      bodySizeLimit: "500mb",
+    },
+  },
 };
 
 export default nextConfig;

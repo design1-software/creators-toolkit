@@ -79,9 +79,16 @@ export default function ShortFormPage() {
       form.append("video", file);
 
       const res = await fetch("/api/short-form/upload", { method: "POST", body: form });
-      const data = await res.json();
 
-      if (!res.ok) throw new Error(data.error || "Upload failed");
+      // 📘 Parse the JSON body safely — if the server returns a non-JSON error
+      // (e.g. a framework-level 400 before our handler runs), res.json() throws.
+      // We read as text first so we always get a readable error message.
+      // 🔗 fetch API: https://www.w3schools.com/js/js_api_fetch.asp
+      const text = await res.text();
+      let data: Record<string, string> = {};
+      try { data = JSON.parse(text); } catch { /* non-JSON body — data stays empty */ }
+
+      if (!res.ok) throw new Error(data.error || `Upload failed (HTTP ${res.status})`);
 
       // 📘 Save to local variables for use in later steps, AND to React state for the UI.
       currentJobId = data.jobId;
