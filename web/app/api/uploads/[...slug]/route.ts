@@ -144,6 +144,11 @@ export async function GET(
         "Content-Length": chunkSize.toString(),
         "Content-Type":   contentType,
         "Cache-Control":  "no-cache",
+        // 📘 Remotion's Chromium renderer uses fetch() to load audio via useAudioData().
+        // fetch() enforces CORS even for same-machine requests when the ports differ
+        // (Remotion bundle server: 3000, Next.js: 8080 → cross-origin).
+        // This header allows the fetch while keeping the route private to the container.
+        "Access-Control-Allow-Origin": "*",
       },
     });
   }
@@ -158,6 +163,7 @@ export async function GET(
       "Content-Length": fileSize.toString(),
       "Accept-Ranges":  "bytes",  // 📘 advertise range support so Chromium uses it
       "Cache-Control":  "no-cache",
+      "Access-Control-Allow-Origin": "*",
     },
   });
 }
