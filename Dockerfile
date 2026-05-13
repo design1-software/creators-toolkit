@@ -35,9 +35,6 @@ RUN npm run build
 
 
 # ── Stage 4: Production runner ────────────────────────────────────────────────
-# 📘 ARG CACHEBUST forces Docker to invalidate all layers below this line when
-# its value changes. Set it to today's date to guarantee a clean rebuild.
-ARG CACHEBUST=2026-05-12
 # 📘 The official Remotion base image (ghcr.io/remotion-dev/base) ships with:
 # - The exact Chromium version Remotion expects
 # - All required system libraries (nss, drm, atk, etc.)
@@ -46,6 +43,12 @@ ARG CACHEBUST=2026-05-12
 # This replaces our manual apt-get install of chromium + 10 separate lib packages.
 # 🔗 Remotion base image: https://github.com/remotion-dev/remotion/pkgs/container/base
 FROM ghcr.io/remotion-dev/base AS runner
+
+# 📘 CACHEBUST must be declared INSIDE a stage to invalidate that stage's layer cache.
+# Change this value whenever you need Railway to rebuild all layers in this stage from scratch.
+# 🔗 Docker ARG caching: https://docs.docker.com/build/building/cache/
+ARG CACHEBUST=2026-05-12-v3
+RUN echo "Cache bust: $CACHEBUST"
 
 # 📘 Install FFmpeg on top of the Remotion base image.
 # FFmpeg handles audio mixing (voiceover + music) and audio extraction from video.
@@ -69,12 +72,6 @@ COPY --from=builder /app/web/public           ./public
 # ── Copy the Remotion project ─────────────────────────────────────────────────
 COPY --from=project-deps /app/project/node_modules ./project/node_modules
 COPY project/ ./project/
-
-# 📘 Explicitly delete any remotion config file that may have survived Docker's
-# layer cache. Even if .dockerignore and git deletion didn't bust the cache,
-# this RUN command always executes and guarantees the file cannot exist.
-# Options are passed via CLI flags (--gl, --concurrency) in the render routes instead.
-RUN rm -f /app/project/remotion.config.ts /app/project/remotion.config.js
 
 # 📘 Railway injects its own PORT at runtime — Next.js standalone reads it automatically.
 EXPOSE 8080

@@ -71,7 +71,9 @@ export async function POST(req: NextRequest) {
     // 📘 Shell out to the Remotion CLI inside the project folder.
     // The --props flag passes our style data to the React component.
     // --duration-in-frames overrides the default composition length.
-    const command = `cd "${remotionProjectPath}" && npx remotion render AnimatedQuote "${outputPath}" --props='${props}' --duration-in-frames=${durationInFrames} --fps=30`;
+    // 📘 --gl=swiftshader: software GPU renderer — required on cloud servers with no real GPU.
+    // --concurrency=1: render one frame at a time to avoid out-of-memory on Railway free tier.
+    const command = `cd "${remotionProjectPath}" && npx remotion render AnimatedQuote "${outputPath}" --props='${props}' --duration-in-frames=${durationInFrames} --fps=30 --gl=swiftshader --concurrency=1`;
 
     await execAsync(command, { timeout: 300_000 }); // 5-minute timeout
 

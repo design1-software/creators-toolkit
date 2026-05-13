@@ -11,9 +11,6 @@ project/node_modules/
 # Next.js build output — rebuilt inside the container
 web/.next/
 
-# Remotion config file — caused crashes; options are passed via CLI flags instead
-project/remotion.config.ts
-project/remotion.config.js
 
 # Local environment secrets — never goes in an image
 .env
