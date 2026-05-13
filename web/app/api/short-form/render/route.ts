@@ -23,6 +23,8 @@ export async function POST(req: NextRequest) {
       kenBurnsZones,
       kineticPhrases,
       videoInfo,
+      summary,
+      hookStrength,
     }: {
       jobId: string;
       filePath: string;
@@ -30,7 +32,15 @@ export async function POST(req: NextRequest) {
       kenBurnsZones: KenBurnsZone[];
       kineticPhrases: KineticPhrase[];
       videoInfo: { durationFrames: number; fps: number };
+      summary: string;
+      hookStrength: string;
     } = await req.json();
+
+    // 📘 The intro title card runs for 3 seconds at 30fps before the main footage begins.
+    // We add this to the total duration so Remotion allocates enough frames for both.
+    // Remotion's Series component resets useCurrentFrame() to 0 for each sequence,
+    // so all existing kenBurnsZones and kineticPhrases frame numbers stay correct.
+    const INTRO_FRAMES = 90;
 
     const remotionPath = process.env.REMOTION_PROJECT_PATH;
     if (!remotionPath) {
@@ -67,6 +77,11 @@ export async function POST(req: NextRequest) {
       words,
       kenBurnsZones,
       kineticPhrases,
+      // 📘 Claude's creative analysis — drives the 3-second intro title card.
+      summary: summary ?? "",
+      hookStrength: hookStrength ?? "medium",
+      // 📘 How many frames the intro occupies — lets CaptionedVideo split its Series sequences.
+      introFrames: INTRO_FRAMES,
     };
 
     // 📘 JSON.stringify the props, then escape double-quotes for shell safety.
@@ -87,7 +102,10 @@ export async function POST(req: NextRequest) {
       `&&`,
       `npx remotion render src/index.ts CaptionedVideo "${outputPath}"`,
       `--props="${propsJson}"`,
-      `--duration-in-frames=${videoInfo.durationFrames}`,
+      // 📘 Total frames = intro card + actual video footage.
+      // Series resets useCurrentFrame() to 0 inside each sequence, so all existing
+      // kenBurnsZones and kineticPhrases frame numbers stay correct without any changes.
+      `--duration-in-frames=${videoInfo.durationFrames + INTRO_FRAMES}`,
       `--fps=${videoInfo.fps}`,
       `--gl=swiftshader`,
       `--concurrency=1`,

@@ -38,6 +38,9 @@ export const RemotionRoot: React.FC = () => {
           words: [],
           kenBurnsZones: [],
           kineticPhrases: [],
+          summary: "A sample video for preview",
+          hookStrength: "medium",
+          introFrames: 90,
         } satisfies CaptionedVideoProps}
       />
       {/* 📘 The AnimatedQuote composition — used for the Animated Quotes skill (Phase 3).

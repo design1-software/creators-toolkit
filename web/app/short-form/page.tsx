@@ -41,6 +41,10 @@ export default function ShortFormPage() {
   const [words, setWords] = useState<WordTimestamp[]>([]);
   const [videoUrl, setVideoUrl] = useState("");
   const [summary, setSummary] = useState("");
+  // 📘 hookStrength is returned by Claude in the enhance step ("strong"|"medium"|"weak").
+  // We store it in state so the UI can react to it, and in a local variable so it can
+  // be forwarded to the render step without React's async state batching causing a stale read.
+  const [hookStrength, setHookStrength] = useState("");
 
   // 📘 A helper that updates one step's status and optional detail text.
   // We use the "functional update" form of setSteps to always work with the latest state.
@@ -69,6 +73,11 @@ export default function ShortFormPage() {
     let currentJobId = "";
     let currentFilePath = "";
     let currentVideoInfo: VideoInfo | null = null;
+    // 📘 Local copies of Claude's analysis results — React state updates are async,
+    // so reading the state variables after setSummary/setHookStrength inside this
+    // function would still return the old values. Local variables update immediately.
+    let currentSummary = "";
+    let currentHookStrength = "";
 
     // ── Step 1: Upload ────────────────────────────────────────────────────────
     updateStep("upload", "running");
@@ -158,7 +167,10 @@ export default function ShortFormPage() {
 
       kenBurnsZones = data.kenBurnsZones;
       kineticPhrases = data.kineticPhrases;
-      setSummary(data.summary || "");
+      currentSummary = data.summary || "";
+      currentHookStrength = data.hookStrength || "medium";
+      setSummary(currentSummary);
+      setHookStrength(currentHookStrength);
       updateStep("enhance", "done", `${kineticPhrases.length} kinetic phrases · ${kenBurnsZones.length} Ken Burns zones · Hook: ${data.hookStrength}`);
     } catch (err) {
       updateStep("enhance", "error", String(err));
@@ -178,6 +190,9 @@ export default function ShortFormPage() {
           kenBurnsZones,
           kineticPhrases,
           videoInfo: currentVideoInfo,
+          // 📘 Pass Claude's analysis forward so Remotion can render the intro title card.
+          summary: currentSummary,
+          hookStrength: currentHookStrength,
         }),
       });
       const data = await res.json();

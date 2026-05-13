@@ -1,14 +1,12 @@
 // 📘 WHAT THIS FILE DOES: Renders word-by-word highlighted captions on the video.
 // Each word lights up in sync with the spoken audio using Whisper timestamps.
-// This component is used inside CaptionedVideo.tsx as the caption layer.
-// 🔗 Remotion docs: https://www.remotion.dev/docs
+// The active word uses Remotion's spring() function for a frame-accurate pop animation —
+// unlike CSS transitions, spring() works correctly because Remotion renders each frame
+// as a static React snapshot; CSS 'transition' has no effect between frames.
+// 🔗 Remotion spring: https://www.remotion.dev/docs/spring
 
-// 📘 React is the library that lets us write UI as components.
-// Remotion builds on top of React — every frame of video is a React render.
 import React from "react";
-// 📘 useCurrentFrame() returns the current frame number Remotion is rendering.
-// useVideoConfig() returns fps, width, height, durationInFrames for the composition.
-import { useCurrentFrame, useVideoConfig } from "remotion";
+import { useCurrentFrame, useVideoConfig, spring } from "remotion";
 
 // 📘 A WordTimestamp describes one word from the Whisper transcription.
 // 'start' and 'end' are in seconds — we convert them to frames for Remotion.
@@ -21,57 +19,52 @@ export type WordTimestamp = {
 // 📘 Props this component needs from its parent (CaptionedVideo).
 type AnimatedCaptionsProps = {
   words: WordTimestamp[];    // full array of transcribed words
-  fontSize?: number;         // optional font size override (default: 52)
+  fontSize?: number;         // optional font size override (default: 64)
   maxWordsVisible?: number;  // how many words show at once (default: 5)
 };
 
 // 📘 This component renders a sliding window of highlighted captions.
-// At any given frame it shows a few words, highlighting the one being spoken.
+// At any given frame it shows a few words, spring-animating the one being spoken.
 export const AnimatedCaptions: React.FC<AnimatedCaptionsProps> = ({
   words,
-  fontSize = 52,
+  fontSize = 64,
   maxWordsVisible = 5,
 }) => {
-  // 📘 useCurrentFrame() is the heart of Remotion — it tells us which frame we're on.
+  // 📘 useCurrentFrame() is the heart of Remotion — tells us which frame we're on.
   // Every frame, React re-renders this component with the new frame number.
   const frame = useCurrentFrame();
 
-  // 📘 useVideoConfig() gives us the FPS so we can convert frames ↔ seconds.
-  // For example: frame 30 at 30fps = 1 second into the video.
+  // 📘 useVideoConfig() gives us fps to convert frames ↔ seconds.
+  // At 30fps: frame 30 = 1 second into the video.
   const { fps } = useVideoConfig();
 
-  // 📘 Convert the current frame to seconds so we can compare with word timestamps.
-  // Division converts frames to seconds: frame / fps = seconds elapsed.
+  // 📘 Convert the current frame to seconds to compare with word timestamps.
   const currentTimeSeconds = frame / fps;
 
   // 📘 Find the index of the word currently being spoken.
-  // Array.findIndex() returns the first index where the condition is true, or -1.
+  // findIndex() returns -1 when no word matches (gap between words).
   // 🔗 Array methods: https://www.w3schools.com/jsref/jsref_findindex.asp
   const activeWordIndex = words.findIndex(
     (w) => currentTimeSeconds >= w.start && currentTimeSeconds <= w.end
   );
 
-  // 📘 Determine the window of words to display around the active word.
-  // We show 'maxWordsVisible' words centered near the active word.
+  // 📘 Build a window of words centred near the active word.
+  // Math.max(0, ...) prevents a negative start index.
   const windowStart = Math.max(
     0,
     activeWordIndex === -1
-      ? // If no word is active, show words near the current time
-        words.findIndex((w) => w.start > currentTimeSeconds) - 2
+      ? words.findIndex((w) => w.start > currentTimeSeconds) - 2
       : activeWordIndex - 2
   );
   const visibleWords = words.slice(windowStart, windowStart + maxWordsVisible);
 
-  // 📘 If there are no words to show yet (before first word), render nothing.
   if (visibleWords.length === 0) return null;
 
   return (
-    // 📘 'AbsoluteFill' from Remotion fills the entire frame — like position: absolute
-    // with top/left/right/bottom all set to 0. We position our caption inside it.
     <div
       style={{
         position: "absolute",
-        bottom: "12%",    // position captions near the bottom of the frame
+        bottom: "12%",
         left: 0,
         right: 0,
         display: "flex",
@@ -80,45 +73,69 @@ export const AnimatedCaptions: React.FC<AnimatedCaptionsProps> = ({
         padding: "0 40px",
       }}
     >
-      {/* 📘 The caption container — dark semi-transparent background for readability. */}
       <div
         style={{
           display: "flex",
-          flexWrap: "wrap",   // allows words to wrap to a new line
+          flexWrap: "wrap",
           justifyContent: "center",
-          gap: "10px",
+          gap: "12px",
           maxWidth: "85%",
-          backgroundColor: "rgba(0,0,0,0.55)", // semi-transparent black backdrop
-          borderRadius: "16px",
-          padding: "14px 24px",
+          backgroundColor: "rgba(0,0,0,0.6)",
+          borderRadius: "20px",
+          padding: "18px 28px",
         }}
       >
-        {/* 📘 Render each visible word. The active word gets highlighted in yellow.
-            .map() creates one <span> per word — same pattern as React lists.
-            🔗 React lists: https://www.w3schools.com/react/react_lists.asp */}
         {visibleWords.map((word, i) => {
-          // 📘 Determine if this specific word is the one being spoken right now.
           const globalIndex = windowStart + i;
           const isActive = globalIndex === activeWordIndex;
 
+          // 📘 spring() creates a physics-based animation that snaps to its target value.
+          // 'frame' here is how many frames have elapsed since this word became active.
+          // frame - wordStartFrame gives 0 on the first frame the word is spoken, then
+          // counts up — spring() maps that elapsed count to a smoothly animated scale.
+          // WHY spring() instead of CSS transition: Remotion renders each frame as an
+          // independent static image. CSS transitions need a live DOM to interpolate
+          // between states — they do nothing in Remotion's render pipeline.
+          // 🔗 Spring physics: https://www.remotion.dev/docs/spring
+          const wordStartFrame = Math.round(word.start * fps);
+          const framesSinceActive = Math.max(0, frame - wordStartFrame);
+
+          const activeScale = isActive
+            ? spring({
+                frame: framesSinceActive,
+                fps,
+                config: { damping: 10, stiffness: 300 },
+                from: 1,
+                to: 1.18,
+              })
+            : 1;
+
+          // 📘 The active word also gets a yellow glow. We fade the glow in with
+          // interpolate() so it doesn't just snap on at frame 0.
+          const glowOpacity = isActive
+            ? spring({ frame: framesSinceActive, fps, config: { damping: 20, stiffness: 200 }, from: 0, to: 1 })
+            : 0;
+
           return (
             <span
-              key={`${word.start}-${i}`} // unique key required by React
+              key={`${word.start}-${i}`}
               style={{
                 fontSize,
-                fontWeight: isActive ? 800 : 600,
-                // 📘 Highlighted word = bright yellow; others = white
+                fontWeight: isActive ? 900 : 600,
+                // 📘 Active word = bright yellow; others = white
                 color: isActive ? "#FFE600" : "#FFFFFF",
-                // 📘 Text shadow adds depth and makes text readable on any background
                 textShadow: isActive
-                  ? "0 0 20px rgba(255,230,0,0.8), 2px 2px 4px rgba(0,0,0,0.9)"
-                  : "2px 2px 4px rgba(0,0,0,0.9)",
-                // 📘 Scale up the active word slightly for emphasis
-                transform: isActive ? "scale(1.08)" : "scale(1)",
-                transition: "all 0.08s ease", // smooth micro-animation
+                  ? `0 0 ${20 * glowOpacity}px rgba(255,230,0,${0.9 * glowOpacity}), 2px 2px 6px rgba(0,0,0,0.95)`
+                  : "2px 2px 6px rgba(0,0,0,0.9)",
+                // 📘 spring() drives the scale — no CSS transition needed or wanted
+                transform: `scale(${activeScale})`,
                 lineHeight: 1.3,
                 fontFamily: "'Arial Black', 'Impact', sans-serif",
-                letterSpacing: isActive ? "0.02em" : "normal",
+                letterSpacing: isActive ? "0.03em" : "normal",
+                // 📘 transform-origin: center keeps the word scaling from its own centre,
+                // not the top-left corner of its bounding box.
+                transformOrigin: "center center",
+                display: "inline-block", // required for transform to apply to inline text
               }}
             >
               {word.word}
