@@ -73,7 +73,7 @@ export async function POST(req: NextRequest) {
     // --duration-in-frames overrides the default composition length.
     // 📘 --gl=swiftshader: software GPU renderer — required on cloud servers with no real GPU.
     // --concurrency=1: render one frame at a time to avoid out-of-memory on Railway free tier.
-    const command = `cd "${remotionProjectPath}" && npx remotion render AnimatedQuote "${outputPath}" --props='${props}' --duration-in-frames=${durationInFrames} --fps=30 --gl=swiftshader --concurrency=1`;
+    const command = `cd "${remotionProjectPath}" && npx remotion render src/index.ts AnimatedQuote "${outputPath}" --props='${props}' --duration-in-frames=${durationInFrames} --fps=30 --gl=swiftshader --concurrency=1`;
 
     await execAsync(command, { timeout: 300_000 }); // 5-minute timeout
 

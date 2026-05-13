@@ -75,10 +75,13 @@ export async function POST(req: NextRequest) {
     // 📘 --gl=swiftshader uses software rendering — required on cloud servers with no GPU.
     // --concurrency=1 renders one frame at a time to stay within Railway's memory limits.
     // These replace remotion.config.ts which was causing a crash on load.
+    // 📘 'src/index.ts' is the entry point — the file that calls registerRoot().
+    // Remotion 4.x requires it explicitly; without it the CLI exits with
+    // "No entry point specified."
     const command = [
       `cd "${remotionPath}"`,
       `&&`,
-      `npx remotion render CaptionedVideo "${outputPath}"`,
+      `npx remotion render src/index.ts CaptionedVideo "${outputPath}"`,
       `--props="${propsJson}"`,
       `--duration-in-frames=${videoInfo.durationFrames}`,
       `--fps=${videoInfo.fps}`,
