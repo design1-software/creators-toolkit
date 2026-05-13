@@ -32,6 +32,15 @@ WORKDIR /app/web
 COPY --from=web-deps /app/web/node_modules ./node_modules
 COPY web/ .
 ENV NEXT_TELEMETRY_DISABLED=1
+
+# 📘 CI=true tells test runners (Jest, Vitest, etc.) to run once and exit instead
+# of staying in interactive watch mode. For 'tsc --noEmit' it has no effect, but
+# it's the correct convention so this keeps working if a test framework is added later.
+# If tsc finds any TypeScript type errors, this RUN step fails and Railway aborts
+# the build — the broken code never reaches production.
+# 🔗 CI environment variable: https://www.w3schools.com/js/js_best_practices.asp
+RUN CI=true npm test
+
 RUN npm run build
 
 
