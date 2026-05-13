@@ -59,9 +59,11 @@ export async function POST(req: NextRequest) {
     const videoFileName = path.basename(filePath); // e.g. "abc123.mp4"
     const port = process.env.PORT || "8080";
     const props = {
-      // 📘 Full HTTP URL — Chromium treats this like any web request.
-      // Next.js serves public/uploads/ at /uploads/... so this resolves to the file on disk.
-      videoSrc: `http://localhost:${port}/uploads/${videoFileName}`,
+      // 📘 Full HTTP URL pointing to our /api/uploads/ route handler.
+      // We cannot use /uploads/ (static) because Next.js standalone caches a 404
+      // for any path not present at build time, and public/uploads/ is runtime-created.
+      // The API route reads directly from disk with the correct Content-Type + range support.
+      videoSrc: `http://localhost:${port}/api/uploads/${videoFileName}`,
       words,
       kenBurnsZones,
       kineticPhrases,
