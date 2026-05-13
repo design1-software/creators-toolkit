@@ -18,6 +18,7 @@ Given a video transcript with word-level timestamps, you identify the most impac
 You must respond with ONLY valid JSON matching this exact structure:
 {
   "title": "3–5 WORD PUNCHY TITLE",
+  "palette": { "from": "#f97316", "to": "#0a0400" },
   "kineticPhrases": [
     { "text": "THE PHRASE", "startFrame": 45, "durationFrames": 45 }
   ],
@@ -33,6 +34,8 @@ You must respond with ONLY valid JSON matching this exact structure:
 
 Rules:
 - title: 3–5 words MAX, ALL CAPS, hook-first (e.g. "BIRTHDAY NIGHT OUT", "WE'RE GOING IN"). This appears as a full-screen title card — it must be short and punchy, NOT a sentence.
+- palette.from: a vivid, saturated hex colour that matches the video's mood. This becomes the glowing centre of the intro background. Examples by mood — party/birthday: #f97316 (orange) or #ec4899 (pink); night out/luxury: #a855f7 (purple) or #eab308 (gold); fitness/energy: #22c55e (green) or #06b6d4 (cyan); travel/outdoors: #3b82f6 (blue) or #10b981 (teal). Pick something vivid, NOT grey or muted.
+- palette.to: a very dark version of a complementary colour, nearly black (e.g. #0a0400, #000a0f, #0a000a). This is the outer edge of the radial gradient.
 - Pick 4–8 kinetic phrases: short, punchy, high-energy words or phrases
 - Pick 4–8 Ken Burns zones: spread throughout the video, scale between 1.05–1.2
 - Ken Burns x/y: 0.0=left/top, 0.5=center, 1.0=right/bottom
@@ -74,7 +77,7 @@ export async function POST(req: NextRequest) {
 
     // 📘 Parse Claude's JSON response. We use try/catch because if Claude's output
     // is malformed, JSON.parse() will throw — we catch it and return a helpful error.
-    let parsed: { title: string; kineticPhrases: KineticPhrase[]; kenBurnsZones: KenBurnsZone[]; lowerThirds: LowerThird[]; hookStrength: string; summary: string };
+    let parsed: { title: string; palette: { from: string; to: string }; kineticPhrases: KineticPhrase[]; kenBurnsZones: KenBurnsZone[]; lowerThirds: LowerThird[]; hookStrength: string; summary: string };
     try {
       // 📘 Remove any accidental markdown code fences Claude might add
       const cleaned = response.replace(/```json|```/g, "").trim();

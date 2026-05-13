@@ -40,8 +40,7 @@ export const RemotionRoot: React.FC = () => {
           kineticPhrases: [],
           lowerThirds: [],
           title: "SAMPLE VIDEO",
-          summary: "A sample video for preview in Remotion Studio.",
-          hookStrength: "medium",
+          palette: { from: "#a855f7", to: "#050008" },
           introFrames: 90,
           audioSrc: "",
         } satisfies CaptionedVideoProps}

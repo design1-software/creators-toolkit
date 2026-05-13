@@ -64,12 +64,16 @@ export type CaptionedVideoProps = {
   kenBurnsZones: KenBurnsZone[];
   kineticPhrases: KineticPhrase[];
   lowerThirds: LowerThird[];
-  title: string;        // 3–5 word ALL CAPS hook shown large on the intro card
-  summary: string;      // full sentence shown as a subtitle beneath the title
-  hookStrength: string; // "strong" | "medium" | "weak"
-  introFrames: number;  // frames the intro card occupies (90 = 3s at 30fps)
+  title: string;       // 3–5 word ALL CAPS hook — the only text on the intro card
+  introFrames: number; // frames the intro card occupies (90 = 3s at 30fps)
+  // 📘 Dynamic colour palette for the intro card background.
+  // 'from' = vivid centre colour (chosen by Claude based on video mood).
+  // 'to'   = very dark edge colour — creates a radial bloom effect.
+  palette: { from: string; to: string };
+  // kept for backward compatibility but no longer rendered on the intro card
+  summary?: string;
+  hookStrength?: string;
   // 📘 HTTP URL for the normalized WAV — empty string disables the audio visualizer.
-  // Remotion's useAudioData() fetches this file during rendering to read frequency data.
   audioSrc?: string;
 };
 
@@ -77,74 +81,61 @@ export type CaptionedVideoProps = {
 // IntroCard
 // ─────────────────────────────────────────────────────────────────────────────
 
+// 📘 IntroCard — title only, dynamic palette, spring scale-in for impact.
+// The background is a radial gradient: Claude's vivid 'from' colour at the centre
+// (where the eye lands on the title) fading to a near-black 'to' colour at the edges.
+// A light-bloom div sits behind the text to create a glow/halo effect.
 const IntroCard: React.FC<{
   title: string;
-  summary: string;
-  hookStrength: string;
   introFrames: number;
-}> = ({ title, summary, hookStrength, introFrames }) => {
+  palette: { from: string; to: string };
+}> = ({ title, introFrames, palette }) => {
   const frame = useCurrentFrame();
   const { fps } = useVideoConfig();
 
-  // 📘 Fade the whole card in over 12 frames and out over 12 frames at the end.
-  // The fade is applied to an inner wrapper — NOT to the AbsoluteFill — so the
-  // background colour stays solid and only the content animates.
+  // 📘 Spring scale: title punches in from 0.7× to 1× — feels like a snap cut reveal.
+  const titleScale = spring({
+    frame,
+    fps,
+    config: { damping: 14, stiffness: 160 },
+    from: 0.7,
+    to: 1,
+  });
+
+  // 📘 Fade the content in quickly (8 frames) and out at the very end (12 frames).
   const opacity = interpolate(
     frame,
-    [0, 12, introFrames - 12, introFrames],
+    [0, 8, introFrames - 12, introFrames],
     [0, 1, 1, 0],
     { extrapolateLeft: "clamp", extrapolateRight: "clamp" }
   );
 
-  // 📘 The title slides up slightly as it fades in — gives a polished entrance feel.
-  const contentY = interpolate(
-    frame,
-    [0, 20],
-    [36, 0],
-    { extrapolateLeft: "clamp", extrapolateRight: "clamp" }
-  );
-
-  // 📘 "STRONG HOOK" badge springs in 10 frames after the title arrives.
-  const badgeScale = hookStrength === "strong"
-    ? spring({ frame: Math.max(0, frame - 10), fps, config: { damping: 12, stiffness: 220 }, from: 0, to: 1 })
-    : 0;
-
   return (
-    // 📘 AbsoluteFill covers the full 1080×1920 frame with a solid background.
-    // Opacity is NOT on this element — putting opacity here would fade the background
-    // too, which looks wrong. Instead we apply it to the inner content wrapper.
     <AbsoluteFill
       style={{
-        background: "linear-gradient(160deg, #0a0a0f 0%, #1a0830 55%, #0a0a0f 100%)",
+        // 📘 Radial gradient: vivid centre → near-black edge.
+        // Each video gets a unique colour from Claude's palette choice.
+        background: `radial-gradient(ellipse at center, ${palette.from} 0%, ${palette.to} 100%)`,
       }}
     >
-      {/* ── Branding label — top-centre ── */}
-      {/* 📘 position: absolute takes it out of flow so it doesn't affect flex centering below. */}
+      {/* ── Light bloom behind the title — amplifies the glow effect ── */}
+      {/* 📘 A large semi-transparent radial disc centred on the frame creates
+          a bloom/halo around the text without needing image assets. */}
       <div
         style={{
           position: "absolute",
-          top: 90,
-          left: 0,
-          right: 0,
-          textAlign: "center",
-          fontSize: 28,
-          fontWeight: 600,
-          fontFamily: "'Arial', sans-serif",
-          color: "rgba(255,255,255,0.5)",
-          letterSpacing: "0.25em",
-          textTransform: "uppercase",
+          top: "50%",
+          left: "50%",
+          transform: "translate(-50%, -50%)",
+          width: "140%",
+          height: "55%",
+          background: `radial-gradient(ellipse at center, ${palette.from}55 0%, transparent 70%)`,
           opacity,
+          pointerEvents: "none",
         }}
-      >
-        Creators Toolkit
-      </div>
+      />
 
-      {/* ── Content wrapper — vertically centred with a full-height explicit div ── */}
-      {/* 📘 WHY an inner div instead of flex on AbsoluteFill?
-          AbsoluteFill applies position:absolute which removes it from layout flow.
-          Pairing display:flex + alignItems:center on a position:absolute element
-          can behave inconsistently in headless Chromium. An explicit inner div
-          with width/height:100% and display:flex gives reliable centering. */}
+      {/* ── Title — the only text on the card ── */}
       <div
         style={{
           position: "absolute",
@@ -153,83 +144,31 @@ const IntroCard: React.FC<{
           width: "100%",
           height: "100%",
           display: "flex",
-          flexDirection: "column",
           alignItems: "center",
           justifyContent: "center",
           opacity,
-          transform: `translateY(${contentY}px)`,
         }}
       >
-        {/* "STRONG HOOK" badge — only when Claude rated it strong */}
-        {hookStrength === "strong" && (
-          <div
-            style={{
-              transform: `scale(${badgeScale})`,
-              transformOrigin: "center center",
-              backgroundColor: "#7c3aed",
-              color: "#fff",
-              fontSize: 26,
-              fontWeight: 700,
-              fontFamily: "'Arial Black', sans-serif",
-              padding: "10px 32px",
-              borderRadius: 100,
-              letterSpacing: "0.15em",
-              textTransform: "uppercase",
-              marginBottom: 48,
-            }}
-          >
-            Strong Hook
-          </div>
-        )}
-
-        {/* 📘 Title — 3–5 word ALL CAPS hook from Claude. Large and punchy. */}
         <div
           style={{
-            fontSize: 96,
+            fontSize: 140,
             fontWeight: 900,
             fontFamily: "'Arial Black', 'Impact', sans-serif",
             color: "#ffffff",
             textAlign: "center",
-            lineHeight: 1.1,
-            letterSpacing: "0.03em",
+            lineHeight: 1.05,
+            letterSpacing: "0.02em",
             padding: "0 80px",
-            textShadow: "0 4px 32px rgba(124,58,237,0.6)",
-            marginBottom: 32,
+            // 📘 Two-layer text shadow: a wide colour glow matching the palette,
+            // and a tight dark drop-shadow for legibility against the bloom.
+            textShadow: `0 0 80px ${palette.from}, 0 0 160px ${palette.from}88, 0 8px 24px rgba(0,0,0,0.9)`,
+            transform: `scale(${titleScale})`,
+            transformOrigin: "center center",
           }}
         >
           {title}
         </div>
-
-        {/* 📘 Summary — full sentence, smaller, acts as subtitle context. */}
-        <div
-          style={{
-            fontSize: 36,
-            fontWeight: 400,
-            fontFamily: "'Arial', sans-serif",
-            color: "rgba(255,255,255,0.65)",
-            textAlign: "center",
-            lineHeight: 1.5,
-            padding: "0 100px",
-            fontStyle: "italic",
-          }}
-        >
-          {summary}
-        </div>
       </div>
-
-      {/* ── Purple accent line — bottom anchor ── */}
-      <div
-        style={{
-          position: "absolute",
-          bottom: 100,
-          left: 120,
-          right: 120,
-          height: 4,
-          backgroundColor: "#7c3aed",
-          borderRadius: 2,
-          opacity,
-        }}
-      />
     </AbsoluteFill>
   );
 };
@@ -598,8 +537,7 @@ export const CaptionedVideo: React.FC<CaptionedVideoProps> = ({
   kineticPhrases,
   lowerThirds,
   title,
-  summary,
-  hookStrength,
+  palette,
   introFrames,
   audioSrc,
 }) => {
@@ -613,9 +551,8 @@ export const CaptionedVideo: React.FC<CaptionedVideoProps> = ({
         <Series.Sequence durationInFrames={introFrames}>
           <IntroCard
             title={title}
-            summary={summary}
-            hookStrength={hookStrength}
             introFrames={introFrames}
+            palette={palette}
           />
         </Series.Sequence>
 

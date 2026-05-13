@@ -23,6 +23,7 @@ export async function POST(req: NextRequest) {
       kenBurnsZones,
       kineticPhrases,
       lowerThirds,
+      palette,
       videoInfo,
       summary,
       hookStrength,
@@ -35,6 +36,7 @@ export async function POST(req: NextRequest) {
       kenBurnsZones: KenBurnsZone[];
       kineticPhrases: KineticPhrase[];
       lowerThirds: LowerThird[];
+      palette: { from: string; to: string };
       videoInfo: { durationFrames: number; fps: number };
       summary: string;
       hookStrength: string;
@@ -94,6 +96,7 @@ export async function POST(req: NextRequest) {
       kenBurnsZones,
       kineticPhrases,
       lowerThirds,
+      palette,
       // 📘 Claude's creative analysis — drives the 3-second intro title card.
       // title: 3-5 word punchy ALL CAPS hook shown large on the intro card.
       // summary: full sentence shown smaller beneath it.

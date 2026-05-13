@@ -158,6 +158,7 @@ export default function ShortFormPage() {
     let kenBurnsZones: KenBurnsZone[] = [];
     let kineticPhrases: KineticPhrase[] = [];
     let lowerThirds: LowerThird[] = [];
+    let currentPalette: { from: string; to: string } = { from: "#a855f7", to: "#050008" };
     try {
       const res = await fetch("/api/short-form/enhance", {
         method: "POST",
@@ -171,6 +172,9 @@ export default function ShortFormPage() {
       kineticPhrases = data.kineticPhrases;
       // 📘 lowerThirds may be absent in older Claude responses — default to empty array.
       lowerThirds = data.lowerThirds || [];
+      // 📘 Palette drives the intro card's dynamic background — Claude picks a vivid
+      // center colour per video. Fall back to purple if the field is missing.
+      currentPalette = data.palette || { from: "#a855f7", to: "#050008" };
       currentSummary = data.summary || "";
       currentHookStrength = data.hookStrength || "medium";
       currentTitle = data.title || "";
@@ -195,6 +199,7 @@ export default function ShortFormPage() {
           kenBurnsZones,
           kineticPhrases,
           lowerThirds,
+          palette: currentPalette,
           videoInfo: currentVideoInfo,
           // 📘 Pass Claude's analysis forward so Remotion can render the intro title card.
           summary: currentSummary,
