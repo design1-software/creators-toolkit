@@ -8,7 +8,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { sendMessage } from "@/lib/claude";
 import type { WordTimestamp } from "@/lib/whisper";
-import type { KenBurnsZone, KineticPhrase } from "@/lib/types";
+import type { KenBurnsZone, KineticPhrase, LowerThird } from "@/lib/types";
 
 // 📘 The system prompt tells Claude exactly what role to play and what to output.
 // We ask for JSON so we can parse it reliably — no guessing at the format.
@@ -24,6 +24,9 @@ You must respond with ONLY valid JSON matching this exact structure:
   "kenBurnsZones": [
     { "startFrame": 0, "endFrame": 90, "scale": 1.12, "x": 0.5, "y": 0.5 }
   ],
+  "lowerThirds": [
+    { "label": "LOCATION OR NAME", "sublabel": "Context line", "startFrame": 90, "durationFrames": 90 }
+  ],
   "hookStrength": "strong|medium|weak",
   "summary": "One sentence describing what this video is about."
 }
@@ -33,6 +36,9 @@ Rules:
 - Pick 4–8 kinetic phrases: short, punchy, high-energy words or phrases
 - Pick 4–8 Ken Burns zones: spread throughout the video, scale between 1.05–1.2
 - Ken Burns x/y: 0.0=left/top, 0.5=center, 1.0=right/bottom
+- Pick 2–4 lower thirds: label a key location, person, or moment from the transcript. label is ALL CAPS (max 4 words). sublabel is mixed case context (e.g. "Bar · Manhattan" or "Creator · Los Angeles").
+- Lower thirds must NOT overlap with kinetic phrases — check startFrame ranges carefully
+- Lower thirds durationFrames: 75–120 frames (2.5–4 seconds)
 - Frames are at 30fps — multiply seconds by 30 to get frames
 - Do NOT overlap kinetic phrases with each other
 - Respond with ONLY the JSON object — no explanation, no markdown code blocks`;
@@ -68,7 +74,7 @@ export async function POST(req: NextRequest) {
 
     // 📘 Parse Claude's JSON response. We use try/catch because if Claude's output
     // is malformed, JSON.parse() will throw — we catch it and return a helpful error.
-    let parsed: { title: string; kineticPhrases: KineticPhrase[]; kenBurnsZones: KenBurnsZone[]; hookStrength: string; summary: string };
+    let parsed: { title: string; kineticPhrases: KineticPhrase[]; kenBurnsZones: KenBurnsZone[]; lowerThirds: LowerThird[]; hookStrength: string; summary: string };
     try {
       // 📘 Remove any accidental markdown code fences Claude might add
       const cleaned = response.replace(/```json|```/g, "").trim();

@@ -21,6 +21,16 @@ export type KineticPhrase = {
   durationFrames: number;
 };
 
+// 📘 A LowerThird is a director-style banner that slides in from the left
+// to label a moment — a location, a person, a key quote.
+// It appears above the audio visualizer bars and hides captions while active.
+export type LowerThird = {
+  label: string;     // main text — short, upper-case (e.g. "INTOXICATED SCIENTIST")
+  sublabel: string;  // secondary line (e.g. "Bar · Birthday Night Out")
+  startFrame: number;
+  durationFrames: number;
+};
+
 // 📘 VideoInfo holds the metadata FFprobe reads from a video file.
 export type VideoInfo = {
   duration: number;       // total length in seconds

@@ -9,7 +9,7 @@ import path from "path";
 import fs from "fs";
 import { exec } from "child_process";
 import { promisify } from "util";
-import type { KenBurnsZone, KineticPhrase } from "@/lib/types";
+import type { KenBurnsZone, KineticPhrase, LowerThird } from "@/lib/types";
 import type { WordTimestamp } from "@/lib/whisper";
 
 const execAsync = promisify(exec);
@@ -22,6 +22,7 @@ export async function POST(req: NextRequest) {
       words,
       kenBurnsZones,
       kineticPhrases,
+      lowerThirds,
       videoInfo,
       summary,
       hookStrength,
@@ -33,6 +34,7 @@ export async function POST(req: NextRequest) {
       words: WordTimestamp[];
       kenBurnsZones: KenBurnsZone[];
       kineticPhrases: KineticPhrase[];
+      lowerThirds: LowerThird[];
       videoInfo: { durationFrames: number; fps: number };
       summary: string;
       hookStrength: string;
@@ -91,6 +93,7 @@ export async function POST(req: NextRequest) {
       words,
       kenBurnsZones,
       kineticPhrases,
+      lowerThirds,
       // 📘 Claude's creative analysis — drives the 3-second intro title card.
       // title: 3-5 word punchy ALL CAPS hook shown large on the intro card.
       // summary: full sentence shown smaller beneath it.

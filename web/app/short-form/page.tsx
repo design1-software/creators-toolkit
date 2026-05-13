@@ -15,7 +15,7 @@ import Link from "next/link";
 import FileUpload from "@/components/FileUpload";
 import ProgressTracker, { type Step } from "@/components/ProgressTracker";
 import type { WordTimestamp } from "@/lib/whisper";
-import type { KenBurnsZone, KineticPhrase, VideoInfo } from "@/lib/types";
+import type { KenBurnsZone, KineticPhrase, LowerThird, VideoInfo } from "@/lib/types";
 
 // 📘 Define the initial steps for the progress tracker.
 // All start as "pending" — we update them one by one as each step runs.
@@ -157,6 +157,7 @@ export default function ShortFormPage() {
     updateStep("enhance", "running");
     let kenBurnsZones: KenBurnsZone[] = [];
     let kineticPhrases: KineticPhrase[] = [];
+    let lowerThirds: LowerThird[] = [];
     try {
       const res = await fetch("/api/short-form/enhance", {
         method: "POST",
@@ -168,12 +169,14 @@ export default function ShortFormPage() {
 
       kenBurnsZones = data.kenBurnsZones;
       kineticPhrases = data.kineticPhrases;
+      // 📘 lowerThirds may be absent in older Claude responses — default to empty array.
+      lowerThirds = data.lowerThirds || [];
       currentSummary = data.summary || "";
       currentHookStrength = data.hookStrength || "medium";
       currentTitle = data.title || "";
       setSummary(currentSummary);
       setHookStrength(currentHookStrength);
-      updateStep("enhance", "done", `${kineticPhrases.length} kinetic phrases · ${kenBurnsZones.length} Ken Burns zones · Hook: ${data.hookStrength}`);
+      updateStep("enhance", "done", `${kineticPhrases.length} kinetic phrases · ${kenBurnsZones.length} Ken Burns zones · ${lowerThirds.length} lower thirds · Hook: ${data.hookStrength}`);
     } catch (err) {
       updateStep("enhance", "error", String(err));
       return;
@@ -191,6 +194,7 @@ export default function ShortFormPage() {
           words: transcribedWords,
           kenBurnsZones,
           kineticPhrases,
+          lowerThirds,
           videoInfo: currentVideoInfo,
           // 📘 Pass Claude's analysis forward so Remotion can render the intro title card.
           summary: currentSummary,

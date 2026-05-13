@@ -51,11 +51,19 @@ export type KineticPhrase = {
   durationFrames: number;
 };
 
+export type LowerThird = {
+  label: string;
+  sublabel: string;
+  startFrame: number;
+  durationFrames: number;
+};
+
 export type CaptionedVideoProps = {
   videoSrc: string;
   words: WordTimestamp[];
   kenBurnsZones: KenBurnsZone[];
   kineticPhrases: KineticPhrase[];
+  lowerThirds: LowerThird[];
   title: string;        // 3–5 word ALL CAPS hook shown large on the intro card
   summary: string;      // full sentence shown as a subtitle beneath the title
   hookStrength: string; // "strong" | "medium" | "weak"
@@ -253,6 +261,129 @@ const BrandingMark: React.FC = () => (
 );
 
 // ─────────────────────────────────────────────────────────────────────────────
+// LowerThirdOverlay — director-style banner that labels a location or moment
+// ─────────────────────────────────────────────────────────────────────────────
+
+// 📘 A lower third is the text banner you see in broadcast TV and YouTube vlogs —
+// slides in from the left, holds for a few seconds, then exits left.
+// It sits above the audio visualizer bars and below the kinetic text zone.
+// Captions are suppressed when a lower third is active to keep the frame clean.
+//
+// Position: bottom 450px (above the 400px audio bars + 50px gap).
+// Width: 68% of the 1080px frame so it never reaches the JLM watermark (top-right).
+// Priority: hidden during kinetic phrases — caller passes activeLowerThird=null when phrase is on.
+const LowerThirdOverlay: React.FC<{ lowerThird: LowerThird }> = ({ lowerThird }) => {
+  const frame = useCurrentFrame();
+  const { fps } = useVideoConfig();
+
+  const elapsed = frame - lowerThird.startFrame;
+  const SLIDE_IN_FRAMES  = 12; // frames to animate in
+  const SLIDE_OUT_FRAMES = 14; // frames to animate out before end
+
+  // 📘 spring() drives the entrance — slides from off-screen left to resting position.
+  const slideIn = spring({
+    frame: elapsed,
+    fps,
+    config: { damping: 18, stiffness: 200 },
+    from: -780, // start fully off the left edge (negative px)
+    to: 0,
+  });
+
+  // 📘 interpolate() drives the exit — after the hold period, slide back left.
+  // We use a linear ease so the exit feels like a deliberate pull rather than a bounce.
+  const slideOut = elapsed >= lowerThird.durationFrames - SLIDE_OUT_FRAMES
+    ? interpolate(
+        elapsed,
+        [lowerThird.durationFrames - SLIDE_OUT_FRAMES, lowerThird.durationFrames],
+        [0, -780],
+        { extrapolateLeft: "clamp", extrapolateRight: "clamp" }
+      )
+    : 0;
+
+  // 📘 Combine entrance and exit — both are offsets; add them so exit overrides hold.
+  const translateX = elapsed < SLIDE_IN_FRAMES ? slideIn : slideOut;
+
+  // 📘 Fade in quickly and fade out with the slide so there's no hard cut.
+  const opacity = interpolate(
+    elapsed,
+    [0, SLIDE_IN_FRAMES, lowerThird.durationFrames - SLIDE_OUT_FRAMES, lowerThird.durationFrames],
+    [0, 1, 1, 0],
+    { extrapolateLeft: "clamp", extrapolateRight: "clamp" }
+  );
+
+  return (
+    <div
+      style={{
+        position: "absolute",
+        // 📘 bottom: 450px puts us 50px above the audio visualizer bars (400px tall).
+        // This also clears the caption zone (bottom: 12% = ~230px) with room to spare.
+        bottom: 450,
+        left: 0,
+        transform: `translateX(${translateX}px)`,
+        opacity,
+        // 📘 Width is 68% of 1080px = ~734px, leaving the right 32% clear for the watermark.
+        width: "68%",
+        display: "flex",
+        alignItems: "stretch",
+        pointerEvents: "none",
+      }}
+    >
+      {/* Purple left accent bar — the visual anchor of the lower third */}
+      <div
+        style={{
+          width: 8,
+          borderRadius: "0 0 0 0",
+          background: "linear-gradient(to bottom, #a78bfa, #7c3aed)",
+          flexShrink: 0,
+        }}
+      />
+
+      {/* Text block */}
+      <div
+        style={{
+          backgroundColor: "rgba(0, 0, 0, 0.72)",
+          padding: "18px 28px",
+          display: "flex",
+          flexDirection: "column",
+          gap: 6,
+          flex: 1,
+        }}
+      >
+        {/* 📘 Label — ALL CAPS, bold. Identifies the place/person/moment. */}
+        <div
+          style={{
+            fontSize: 46,
+            fontWeight: 900,
+            fontFamily: "'Arial Black', 'Impact', sans-serif",
+            color: "#ffffff",
+            letterSpacing: "0.06em",
+            textTransform: "uppercase",
+            lineHeight: 1.1,
+            textShadow: "0 2px 8px rgba(0,0,0,0.7)",
+          }}
+        >
+          {lowerThird.label}
+        </div>
+
+        {/* 📘 Sublabel — context line in mixed case and a lighter colour. */}
+        <div
+          style={{
+            fontSize: 30,
+            fontWeight: 400,
+            fontFamily: "'Arial', sans-serif",
+            color: "rgba(255,255,255,0.72)",
+            letterSpacing: "0.02em",
+            lineHeight: 1.2,
+          }}
+        >
+          {lowerThird.sublabel}
+        </div>
+      </div>
+    </div>
+  );
+};
+
+// ─────────────────────────────────────────────────────────────────────────────
 // AudioVisualizer — frequency bar graph anchored to the bottom of the frame
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -344,8 +475,9 @@ const MainFootage: React.FC<{
   words: WordTimestamp[];
   kenBurnsZones: KenBurnsZone[];
   kineticPhrases: KineticPhrase[];
+  lowerThirds: LowerThird[];
   audioSrc?: string;
-}> = ({ videoSrc, words, kenBurnsZones, kineticPhrases, audioSrc }) => {
+}> = ({ videoSrc, words, kenBurnsZones, kineticPhrases, lowerThirds, audioSrc }) => {
   const frame = useCurrentFrame();
   const { fps } = useVideoConfig();
 
@@ -371,6 +503,16 @@ const MainFootage: React.FC<{
   const activePhrase = kineticPhrases.find(
     (p) => frame >= p.startFrame && frame < p.startFrame + p.durationFrames
   );
+
+  // ── Lower thirds ──────────────────────────────────────────────────────────
+  // 📘 Find the active lower third for this frame. When a kinetic phrase is on
+  // screen we treat activeLowerThird as null so the full-screen phrase takes
+  // priority and the lower third banner is hidden.
+  const activeLowerThird = !activePhrase
+    ? lowerThirds.find(
+        (lt) => frame >= lt.startFrame && frame < lt.startFrame + lt.durationFrames
+      ) ?? null
+    : null;
 
   const phraseEntrance = activePhrase
     ? spring({ frame: frame - activePhrase.startFrame, fps, config: { damping: 14, stiffness: 180 } })
@@ -408,8 +550,15 @@ const MainFootage: React.FC<{
       {/* 📘 Renders behind captions so text stays readable, but above the vignette */}
       {audioSrc && <AudioVisualizer audioSrc={audioSrc} />}
 
-      {/* Layer 5: Captions (hidden during kinetic phrases) */}
-      {!activePhrase && <AnimatedCaptions words={words} fontSize={64} />}
+      {/* Layer 5: Lower third — hidden during kinetic phrases (activeLowerThird is null then) */}
+      {/* 📘 Positioned bottom 450px so it clears the audio bars (400px) and doesn't
+          reach the JLM watermark (top-right). Width 68% keeps the right side clear. */}
+      {activeLowerThird && <LowerThirdOverlay lowerThird={activeLowerThird} />}
+
+      {/* Layer 6: Captions — hidden during kinetic phrases AND during lower thirds */}
+      {/* 📘 Suppressing captions while a lower third is visible keeps the frame
+          uncluttered — both elements live in the lower portion of the frame. */}
+      {!activePhrase && !activeLowerThird && <AnimatedCaptions words={words} fontSize={64} />}
 
       {/* Layer 6: Kinetic text pop */}
       {activePhrase && (
@@ -447,6 +596,7 @@ export const CaptionedVideo: React.FC<CaptionedVideoProps> = ({
   words,
   kenBurnsZones,
   kineticPhrases,
+  lowerThirds,
   title,
   summary,
   hookStrength,
@@ -477,6 +627,7 @@ export const CaptionedVideo: React.FC<CaptionedVideoProps> = ({
             words={words}
             kenBurnsZones={kenBurnsZones}
             kineticPhrases={kineticPhrases}
+            lowerThirds={lowerThirds}
             audioSrc={audioSrc}
           />
         </Series.Sequence>
