@@ -77,8 +77,10 @@ export async function POST(req: NextRequest) {
 
     await execAsync(command, { timeout: 300_000 }); // 5-minute timeout
 
-    // 📘 Build a public URL the browser can use to download or play the video.
-    const publicUrl = `/renders/quotes/${outputFileName}`;
+    // 📘 Return via /api/renders/ route handler — not the static /renders/ path.
+    // Next.js standalone caches 404 for runtime-created directories; the API route
+    // bypasses that by reading directly from disk with the correct Content-Type.
+    const publicUrl = `/api/renders/quotes/${outputFileName}`;
     return NextResponse.json({ url: publicUrl });
   } catch (err) {
     const message = err instanceof Error ? err.message : "Unknown error";

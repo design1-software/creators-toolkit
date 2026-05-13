@@ -96,8 +96,10 @@ export async function POST(req: NextRequest) {
     // 📘 Run the render — this is the longest step, can take 30–120 seconds.
     await execAsync(command, { timeout: 600000 }); // 10 minute timeout
 
-    // 📘 Return a public web URL — /renders/short-form/... — so the browser can play it.
-    const publicUrl = `/renders/short-form/${outputFileName}`;
+    // 📘 Return via the /api/renders/ route handler — not the /renders/ static path.
+    // Next.js standalone caches 404 for runtime-created directories; the API route
+    // bypasses that by reading directly from disk with the correct Content-Type.
+    const publicUrl = `/api/renders/short-form/${outputFileName}`;
     return NextResponse.json({ url: publicUrl, fileName: outputFileName });
 
   } catch (error) {

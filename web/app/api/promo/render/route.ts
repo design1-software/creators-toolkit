@@ -80,8 +80,10 @@ export async function POST(req: NextRequest) {
     // The timeout is set to 10 minutes (600,000 ms) to handle slower machines.
     await execAsync(command, { timeout: 600_000 });
 
-    // 📘 Return the public URL path so the browser can play or download the video.
-    const publicUrl = `/renders/promo/${outputFileName}`;
+    // 📘 Return via /api/renders/ route handler — not the static /renders/ path.
+    // Next.js standalone caches 404 for runtime-created directories; the API route
+    // bypasses that by reading directly from disk with the correct Content-Type.
+    const publicUrl = `/api/renders/promo/${outputFileName}`;
     return NextResponse.json({ url: publicUrl });
   } catch (err) {
     const message = err instanceof Error ? err.message : "Unknown error";
