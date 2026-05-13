@@ -163,7 +163,7 @@ export default function ShortFormPage() {
       const res = await fetch("/api/short-form/enhance", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ words: transcribedWords, videoInfo: currentVideoInfo }),
+        body: JSON.stringify({ words: transcribedWords, videoInfo: currentVideoInfo, filePath: currentFilePath }),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error);

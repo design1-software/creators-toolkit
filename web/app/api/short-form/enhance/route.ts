@@ -1,14 +1,23 @@
-// 📘 WHAT THIS FILE DOES: Sends the transcript to Claude for creative analysis.
-// Claude reads the transcription and identifies:
+// 📘 WHAT THIS FILE DOES: Sends the transcript AND video frames to Claude for creative analysis.
+// Claude reads the transcription and sees keyframes from the video, then identifies:
 //   - 4–8 kinetic phrases (high-impact moments for full-screen text pops)
-//   - 4–8 Ken Burns zones (which moments to zoom into and where)
+//   - 4–8 Ken Burns zones (where to zoom — using visual subject positions from the frames)
+//   - 2–4 lower thirds (location/person labels)
+//   - A dynamic colour palette for the intro card
 // URL: POST /api/short-form/enhance
-// Returns: { kineticPhrases, kenBurnsZones } ready to pass to Remotion
+// Returns: { title, palette, kineticPhrases, kenBurnsZones, lowerThirds, hookStrength, summary }
 
 import { NextRequest, NextResponse } from "next/server";
+import fs from "fs";
+import path from "path";
+import { exec } from "child_process";
+import { promisify } from "util";
 import { sendMessage } from "@/lib/claude";
+import type { ContentBlock } from "@/lib/claude";
 import type { WordTimestamp } from "@/lib/whisper";
 import type { KenBurnsZone, KineticPhrase, LowerThird } from "@/lib/types";
+
+const execAsync = promisify(exec);
 
 // 📘 The system prompt tells Claude exactly what role to play and what to output.
 // We ask for JSON so we can parse it reliably — no guessing at the format.
@@ -38,7 +47,7 @@ Rules:
 - palette.to: a very dark version of a complementary colour, nearly black (e.g. #0a0400, #000a0f, #0a000a). This is the outer edge of the radial gradient.
 - Pick 4–8 kinetic phrases: short, punchy, high-energy words or phrases
 - Pick 4–8 Ken Burns zones: spread throughout the video, scale between 1.05–1.2
-- Ken Burns x/y: 0.0=left/top, 0.5=center, 1.0=right/bottom
+- Ken Burns x/y: 0.0=left/top, 0.5=center, 1.0=right/bottom. When visual keyframes are provided above the transcript, use the actual subject/face position visible in the nearest frame to set x/y — do NOT guess; look at the image.
 - Pick 2–4 lower thirds: label a key location, person, or moment from the transcript. label is ALL CAPS (max 4 words). sublabel is mixed case context (e.g. "Bar · Manhattan" or "Creator · Los Angeles").
 - Lower thirds must NOT overlap with kinetic phrases — check startFrame ranges carefully
 - Lower thirds durationFrames: 75–120 frames (2.5–4 seconds)
@@ -47,13 +56,21 @@ Rules:
 - Respond with ONLY the JSON object — no explanation, no markdown code blocks`;
 
 export async function POST(req: NextRequest) {
+  // 📘 framesDir is declared outside try/catch so the cleanup finally-block can reach it
+  // regardless of whether frame extraction succeeded or failed.
+  let framesDir: string | null = null;
+
   try {
     const {
       words,
       videoInfo,
+      filePath,
     }: {
       words: WordTimestamp[];
       videoInfo: { duration: number; fps: number; durationFrames: number };
+      // 📘 filePath is optional — if absent we fall back to text-only analysis.
+      // This keeps the route backward-compatible with any callers that don't send it.
+      filePath?: string;
     } = await req.json();
 
     if (!words?.length) {
@@ -67,11 +84,90 @@ export async function POST(req: NextRequest) {
       .map((w) => `${w.word}(${w.start.toFixed(1)}-${w.end.toFixed(1)}s)`)
       .join(" ");
 
-    const userMessage = `Video transcript with timestamps (${videoInfo.duration.toFixed(1)}s, ${videoInfo.fps}fps, ${videoInfo.durationFrames} frames total):\n\n${transcriptText}`;
+    // ── Visual frame extraction ───────────────────────────────────────────────
+    // 📘 We extract ~10 evenly-spaced JPEG frames from the video and send them to
+    // Claude Vision. Claude can then see where subjects/faces actually appear in each
+    // moment and use those positions to set accurate Ken Burns x/y focal points,
+    // rather than guessing from the transcript text alone.
+    //
+    // Frames are written to /tmp/ and deleted in the finally block regardless of
+    // whether the Claude call succeeds, so we don't leak disk space.
+    const frameBlocks: ContentBlock[] = [];
 
-    // 📘 Send the transcript to Claude and get the kinetic/Ken Burns analysis back.
+    if (filePath && fs.existsSync(filePath)) {
+      try {
+        framesDir = `/tmp/frames_${Date.now()}`;
+        fs.mkdirSync(framesDir, { recursive: true });
+
+        // 📘 Calculate frame interval to get ~10 frames spread across the whole video.
+        // Math.max(2, ...) ensures at least one frame every 2 seconds on very short clips.
+        const interval = Math.max(2, Math.floor(videoInfo.duration / 10));
+
+        // 📘 FFmpeg flags:
+        // -vf "fps=1/N" — output 1 frame every N seconds
+        // scale=480:-1  — resize to 480px wide (small enough for fast API upload)
+        // -frames:v 10  — hard cap at 10 frames
+        // -q:v 4        — JPEG quality (lower = better; 4 is a good size/quality trade-off)
+        await execAsync(
+          `ffmpeg -i "${filePath}" -vf "fps=1/${interval},scale=480:-1" -frames:v 10 -q:v 4 "${framesDir}/frame_%03d.jpg" -y`,
+          { timeout: 30000 }
+        );
+
+        // 📘 Build one header text block, then alternate image + time-label blocks.
+        // Claude processes interleaved text and images well — the label anchors each
+        // frame to a position in the video timeline.
+        const frameFiles = fs.readdirSync(framesDir)
+          .filter((f) => f.endsWith(".jpg"))
+          .sort();
+
+        if (frameFiles.length > 0) {
+          frameBlocks.push({
+            type: "text",
+            text: "Visual keyframes from the video (use subject/face positions for Ken Burns x/y):",
+          });
+
+          for (let i = 0; i < frameFiles.length; i++) {
+            const framePath = path.join(framesDir, frameFiles[i]);
+            const frameTimeSeconds = i * interval;
+            const frameNumber = Math.round(frameTimeSeconds * videoInfo.fps);
+
+            frameBlocks.push({
+              type: "image",
+              source: {
+                type: "base64",
+                media_type: "image/jpeg",
+                data: fs.readFileSync(framePath).toString("base64"),
+              },
+            });
+            frameBlocks.push({
+              type: "text",
+              text: `↑ t=${frameTimeSeconds}s (frame ${frameNumber})`,
+            });
+          }
+        }
+      } catch (frameError) {
+        // 📘 Frame extraction is best-effort — if FFmpeg fails for any reason
+        // (codec issue, corrupt file, timeout) we log and continue with text-only.
+        console.warn("[/api/short-form/enhance] Frame extraction failed, using text-only:", frameError);
+      }
+    }
+
+    // ── Build Claude message ──────────────────────────────────────────────────
+    // 📘 If we have visual frames, the message is a ContentBlock array (images + text).
+    // Otherwise it's a plain string. Both are valid for sendMessage().
+    const transcriptBlock: ContentBlock = {
+      type: "text",
+      text: `Video transcript with timestamps (${videoInfo.duration.toFixed(1)}s, ${videoInfo.fps}fps, ${videoInfo.durationFrames} frames total):\n\n${transcriptText}`,
+    };
+
+    const messageContent = frameBlocks.length > 0
+      ? [...frameBlocks, transcriptBlock]
+      : `${transcriptBlock.text}`;
+
+    // 📘 Send to Claude — with frames it can see the video visually;
+    // without frames it falls back to pure transcript analysis.
     const response = await sendMessage(
-      [{ role: "user", content: userMessage }],
+      [{ role: "user", content: messageContent }],
       ENHANCE_SYSTEM
     );
 
@@ -94,5 +190,11 @@ export async function POST(req: NextRequest) {
   } catch (error) {
     console.error("[/api/short-form/enhance]", error);
     return NextResponse.json({ error: String(error) }, { status: 500 });
+  } finally {
+    // 📘 Always delete the temp frame directory — runs whether the try block
+    // succeeded, threw, or returned early. Prevents disk leaks on Railway.
+    if (framesDir) {
+      try { fs.rmSync(framesDir, { recursive: true, force: true }); } catch {}
+    }
   }
 }
