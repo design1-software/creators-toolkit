@@ -8,11 +8,14 @@ import Anthropic from "@anthropic-ai/sdk";
 // 📘 'const' creates a variable that won't be reassigned.
 // We create ONE Anthropic client here and reuse it across the whole app.
 // This is called the "singleton pattern" — one instance shared everywhere.
-const anthropic = new Anthropic({
-  // process.env reads environment variables set in .env.local
-  // The '!' at the end tells TypeScript "trust me, this value exists"
-  apiKey: process.env.ANTHROPIC_API_KEY!,
-});
+// Validate the key at startup so a missing env var produces a clear error immediately
+// rather than a confusing "authentication failed" 401 on the first API call.
+const apiKey = process.env.ANTHROPIC_API_KEY;
+if (!apiKey) {
+  throw new Error("ANTHROPIC_API_KEY is not set. Add it to .env.local and restart the server.");
+}
+
+const anthropic = new Anthropic({ apiKey });
 
 // 📘 A TextBlock carries plain text inside a multipart message.
 // Used when a message contains both text and images at the same time.

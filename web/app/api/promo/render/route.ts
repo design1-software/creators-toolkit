@@ -52,7 +52,10 @@ export async function POST(req: NextRequest) {
 
     // 📘 Build the props object — passed to the PromoVideo React component at render time.
     // JSON.stringify() converts the JS object to a JSON string for the CLI flag.
-    const props = JSON.stringify({
+    // 📘 Escape double-quotes inside the JSON then wrap in double-quotes.
+    // Single-quote wrapping ('...') breaks whenever the text contains an apostrophe
+    // (e.g. a brand name like "McDonald's") — the shell treats it as the closing quote.
+    const propsJson = JSON.stringify({
       brandName: production.brandName ?? "Brand",
       tagline: production.tagline ?? "",
       keyMessages: production.keyMessages ?? [],
@@ -67,14 +70,14 @@ export async function POST(req: NextRequest) {
       // If image generation was skipped or failed, this is undefined and the
       // PromoVideo composition falls back to the CSS gradient background.
       backgroundImageSrc: backgroundImageSrc ?? undefined,
-    });
+    }).replace(/"/g, '\\"');
 
     // 📘 Build the shell command that tells the Remotion CLI what to render.
     // We 'cd' into the Remotion project folder first so Remotion can find its config.
     // --props passes our data as JSON, --duration-in-frames sets the video length.
     // 📘 --gl=swiftshader: software GPU renderer, required on cloud servers with no GPU.
     // --concurrency=1: one frame at a time to avoid out-of-memory on Railway free tier.
-    const command = `cd "${remotionProjectPath}" && npx remotion render src/index.ts PromoVideo "${outputPath}" --props='${props}' --duration-in-frames=${durationInFrames} --fps=30 --gl=swiftshader --concurrency=1`;
+    const command = `cd "${remotionProjectPath}" && npx remotion render src/index.ts PromoVideo "${outputPath}" --props="${propsJson}" --duration-in-frames=${durationInFrames} --fps=30 --gl=swiftshader --concurrency=1`;
 
     // 📘 The render can take 1–5 minutes depending on video length and machine speed.
     // The timeout is set to 10 minutes (600,000 ms) to handle slower machines.

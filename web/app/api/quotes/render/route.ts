@@ -57,7 +57,11 @@ export async function POST(req: NextRequest) {
     // 📘 Build the props object — this gets passed to the Remotion composition as JSON.
     // JSON.stringify() converts a JavaScript object to a JSON string.
     // 🔗 JSON.stringify: https://www.w3schools.com/js/js_json_stringify.asp
-    const props = JSON.stringify({
+    // 📘 Escape double-quotes inside the JSON then wrap the whole string in double-quotes.
+    // Single-quote wrapping ('...') breaks if the quote text contains an apostrophe
+    // (e.g. "Don't") — the shell treats that apostrophe as the closing quote.
+    // Double-quote wrapping survives apostrophes safely.
+    const propsJson = JSON.stringify({
       quote,
       author,
       gradientFrom: style.gradientFrom ?? "#1a1a2e",
@@ -66,14 +70,14 @@ export async function POST(req: NextRequest) {
       textColor: style.textColor ?? "#ffffff",
       animationStyle: style.animationStyle ?? "word-by-word",
       fontSize: style.fontSize ?? "large",
-    });
+    }).replace(/"/g, '\\"');
 
     // 📘 Shell out to the Remotion CLI inside the project folder.
     // The --props flag passes our style data to the React component.
     // --duration-in-frames overrides the default composition length.
     // 📘 --gl=swiftshader: software GPU renderer — required on cloud servers with no real GPU.
     // --concurrency=1: render one frame at a time to avoid out-of-memory on Railway free tier.
-    const command = `cd "${remotionProjectPath}" && npx remotion render src/index.ts AnimatedQuote "${outputPath}" --props='${props}' --duration-in-frames=${durationInFrames} --fps=30 --gl=swiftshader --concurrency=1`;
+    const command = `cd "${remotionProjectPath}" && npx remotion render src/index.ts AnimatedQuote "${outputPath}" --props="${propsJson}" --duration-in-frames=${durationInFrames} --fps=30 --gl=swiftshader --concurrency=1`;
 
     await execAsync(command, { timeout: 300_000 }); // 5-minute timeout
 

@@ -92,7 +92,9 @@ export async function POST(req: NextRequest) {
     const frameBlocks: ContentBlock[] = [];
 
     if (filePath && fs.existsSync(filePath)) {
-      framesDir = `/tmp/frames_${Date.now()}`;
+      // 📘 crypto.randomUUID() is collision-proof — unlike Date.now(), two simultaneous
+      // requests can't produce the same directory name and stomp each other's frames.
+      framesDir = `/tmp/frames_${crypto.randomUUID()}`;
       fs.mkdirSync(framesDir, { recursive: true });
 
       // 📘 Calculate frame interval to get ~10 frames spread across the whole video.
@@ -176,6 +178,21 @@ export async function POST(req: NextRequest) {
       );
     }
 
+    // 📘 Validate that Claude returned the required fields — if any are missing the
+    // render step will silently produce a broken video. Better to fail loudly here.
+    const missing: string[] = [];
+    if (!parsed.title) missing.push("title");
+    if (!parsed.palette?.from || !parsed.palette?.to) missing.push("palette");
+    if (!Array.isArray(parsed.kineticPhrases)) missing.push("kineticPhrases");
+    if (!Array.isArray(parsed.kenBurnsZones)) missing.push("kenBurnsZones");
+    if (!Array.isArray(parsed.lowerThirds)) missing.push("lowerThirds");
+    if (missing.length > 0) {
+      return NextResponse.json(
+        { error: `Claude response missing required fields: ${missing.join(", ")}`, raw: response },
+        { status: 500 }
+      );
+    }
+
     return NextResponse.json(parsed);
 
   } catch (error) {
@@ -185,7 +202,13 @@ export async function POST(req: NextRequest) {
     // 📘 Always delete the temp frame directory — runs whether the try block
     // succeeded, threw, or returned early. Prevents disk leaks on Railway.
     if (framesDir) {
-      try { fs.rmSync(framesDir, { recursive: true, force: true }); } catch {}
+      try {
+        fs.rmSync(framesDir, { recursive: true, force: true });
+      } catch (cleanupError) {
+        // 📘 Log but don't rethrow — a cleanup failure should not mask the real response.
+        // If this fires repeatedly, check disk permissions on /tmp.
+        console.error("[/api/short-form/enhance] Failed to delete temp frames dir:", cleanupError);
+      }
     }
   }
 }

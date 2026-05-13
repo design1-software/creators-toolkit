@@ -49,8 +49,13 @@ export async function getVideoInfo(filePath: string): Promise<VideoInfo> {
 
   // 📘 FPS is stored as a fraction string like "30/1" or "2997/100" (for 29.97fps).
   // We split on "/" and divide to get a decimal number.
-  const [fpsNum, fpsDen] = videoStream.r_frame_rate.split("/").map(Number);
-  const fps = Math.round(fpsNum / fpsDen); // round to nearest whole fps
+  // Guard: some containers report a plain number ("30") rather than a fraction.
+  // If fpsDen is 0 or NaN the division would produce Infinity or NaN — throw early.
+  const fpsParts = videoStream.r_frame_rate.split("/").map(Number);
+  if (fpsParts.length !== 2 || isNaN(fpsParts[0]) || isNaN(fpsParts[1]) || fpsParts[1] === 0) {
+    throw new Error(`Cannot parse FPS from r_frame_rate: "${videoStream.r_frame_rate}"`);
+  }
+  const fps = Math.round(fpsParts[0] / fpsParts[1]); // round to nearest whole fps
 
   const duration = parseFloat(videoStream.duration || "0");
   const durationFrames = Math.floor(duration * fps);

@@ -62,6 +62,6 @@ export async function POST(req: NextRequest) {
 
   } catch (error) {
     console.error("[/api/short-form/upload]", error);
-    return NextResponse.json({ error: "Upload failed." }, { status: 500 });
+    return NextResponse.json({ error: String(error) }, { status: 500 });
   }
 }
