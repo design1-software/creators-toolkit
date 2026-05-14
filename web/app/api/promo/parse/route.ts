@@ -38,7 +38,7 @@ Required keys:
   "textColor": "#ffffff",
   "durationSeconds": integer — estimated voiceover duration in seconds (word count ÷ 2.5, rounded up, min 20 max 60),
   "imagePrompt": "60-80 word prompt for an AI image generator. Describe a cinematic background scene for this brand video — lighting, mood, environment, visual style, colors, composition. No text, logos, or people's faces. Match the brand's tone exactly.",
-  "musicPrompt": "30-50 word description of the background music for this brand video. Include genre, tempo (BPM range), instruments, and emotional feel. Must match the brand's energy and the voiceover's pace."
+  "musicPrompt": "30-50 word description of the background music for this brand video. Include genre, tempo (BPM range), instruments, and emotional feel. Must match the brand's energy and the voiceover's pace. NEVER mention any artist names, band names, or specific musicians — describe only style, tempo, instruments, and mood."
 }
 
 Rules for color choices:

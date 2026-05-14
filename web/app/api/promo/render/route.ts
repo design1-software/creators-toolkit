@@ -16,7 +16,7 @@ const execAsync = promisify(exec);
 
 export async function POST(req: NextRequest) {
   try {
-    const { jobId, production, voiceSrc, backgroundImageSrc } = await req.json();
+    const { jobId, production, voiceSrc, backgroundImageSrc, backgroundImageSrcs } = await req.json();
 
     if (!jobId || !production) {
       return NextResponse.json(
@@ -66,9 +66,12 @@ export async function POST(req: NextRequest) {
       textColor: production.textColor ?? "#ffffff",
       // 📘 voiceSrc is the mixed audio (voiceover + music) relative to Remotion public/.
       voiceSrc: voiceSrc ?? "",
-      // 📘 backgroundImageSrc is the Kie.ai image relative to Remotion public/.
-      // If image generation was skipped or failed, this is undefined and the
-      // PromoVideo composition falls back to the CSS gradient background.
+      // 📘 backgroundImageSrcs is the full array of user-uploaded images (Option B).
+      // When provided, PromoVideo crossfades through each image in sequence.
+      // Falls back to the single backgroundImageSrc (Kie.ai) or CSS gradient if absent.
+      backgroundImageSrcs: Array.isArray(backgroundImageSrcs) && backgroundImageSrcs.length > 0
+        ? backgroundImageSrcs
+        : undefined,
       backgroundImageSrc: backgroundImageSrc ?? undefined,
     }).replace(/"/g, '\\"');
 

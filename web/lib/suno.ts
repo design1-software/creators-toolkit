@@ -68,6 +68,19 @@ export async function generateMusic(prompt: string): Promise<string> {
     const songs: Array<{ audioUrl: string }> =
       pollData.data?.response?.sunoData ?? [];
 
+    // 📘 These statuses mean Suno rejected or failed the task — stop polling immediately
+    // and surface the actual error message instead of waiting out the full timeout.
+    // Common causes: artist/band name in prompt, prohibited content, or server error.
+    const TERMINAL_FAILURES = [
+      "CREATE_TASK_FAILED",
+      "GENERATE_AUDIO_FAILED",
+      "SENSITIVE_WORD_ERROR",
+    ];
+    if (TERMINAL_FAILURES.includes(status)) {
+      const errMsg = pollData.data?.errorMessage ?? `Suno task failed with status: ${status}`;
+      throw new Error(errMsg);
+    }
+
     if (status === "SUCCESS" || status === "FIRST_SUCCESS") {
       if (songs.length === 0) throw new Error("Suno returned success but no audio tracks");
       return songs[0].audioUrl;
