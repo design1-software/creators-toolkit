@@ -7,7 +7,7 @@
 // URL: http://localhost:3000/promo
 // 🔗 Next.js pages: https://nextjs.org/docs/app/building-your-application/routing/pages
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import Link from "next/link";
 import { v4 as uuidv4 } from "uuid";
 import ChatInterface from "@/components/ChatInterface";
@@ -23,17 +23,91 @@ import type { Message } from "@/lib/claude";
 // 🔗 TypeScript union types: https://www.w3schools.com/typescript/typescript_unions.php
 type Phase = "chat" | "brief" | "production" | "done";
 
+// 📘 PromoCheckpoint stores the pipeline state in localStorage so a crashed or
+// refreshed session can resume from the last successful step instead of starting over.
+// The 1-hour expiry handles Railway server restarts that clear uploaded files.
+type PromoCheckpoint = {
+  timestamp: number;
+  lastCompletedStep?: "parse" | "voiceover" | "image" | "music";
+  brief: string;
+  jobId: string;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  production?: Record<string, any>;
+  voiceSrc?: string;
+  backgroundImageSrc?: string;
+  finalAudioSrc?: string;
+};
+
+const CHECKPOINT_KEY = "creators_toolkit_promo";
+const MAX_AGE_MS = 60 * 60 * 1000; // 1 hour — matches Railway's filesystem lifetime
+
+// 📘 Step order used to compare checkpoint progress.
+const STEP_ORDER = ["parse", "voiceover", "image", "music"] as const;
+type CheckpointStep = (typeof STEP_ORDER)[number];
+
+// 📘 Returns true if 'step' has already been completed according to the checkpoint.
+function isCompleted(last: CheckpointStep | undefined, step: CheckpointStep): boolean {
+  if (!last) return false;
+  return STEP_ORDER.indexOf(last) >= STEP_ORDER.indexOf(step);
+}
+
+function saveCheckpoint(cp: PromoCheckpoint): void {
+  try {
+    localStorage.setItem(CHECKPOINT_KEY, JSON.stringify(cp));
+  } catch { /* localStorage may be unavailable in some environments */ }
+}
+
+function loadCheckpoint(): PromoCheckpoint | null {
+  try {
+    const raw = localStorage.getItem(CHECKPOINT_KEY);
+    if (!raw) return null;
+    const cp = JSON.parse(raw) as PromoCheckpoint;
+    if (Date.now() - cp.timestamp > MAX_AGE_MS) {
+      localStorage.removeItem(CHECKPOINT_KEY);
+      return null;
+    }
+    return cp;
+  } catch {
+    return null;
+  }
+}
+
+function clearCheckpoint(): void {
+  try {
+    localStorage.removeItem(CHECKPOINT_KEY);
+  } catch { /* localStorage may be unavailable */ }
+}
+
+// 📘 Returns a human-readable relative time string, e.g. "3 mins ago".
+function timeAgo(ms: number): string {
+  const mins = Math.floor((Date.now() - ms) / 60_000);
+  if (mins < 1) return "just now";
+  if (mins === 1) return "1 min ago";
+  return `${mins} mins ago`;
+}
+
 // 📘 The full production pipeline — 6 steps, all starting as "pending".
-// Image and music steps are marked as non-fatal: if they fail, the pipeline
-// continues with gradient background and voiceover-only audio as fallbacks.
+// Image and music steps are non-fatal: if they fail the pipeline continues
+// with a gradient background / voiceover-only audio as fallbacks.
 const INITIAL_STEPS: Step[] = [
-  { id: "parse",     label: "Parse brief → extract production data",   status: "pending" },
-  { id: "voiceover", label: "Generate voiceover via ElevenLabs",        status: "pending" },
-  { id: "image",     label: "Generate background image via Kie.ai",    status: "pending" },
-  { id: "music",     label: "Generate & mix background music via Suno", status: "pending" },
-  { id: "render",    label: "Render video in Remotion",                 status: "pending" },
-  { id: "done",      label: "Your video is ready",                      status: "pending" },
+  { id: "parse",     label: "Parse brief → extract production data",    status: "pending" },
+  { id: "voiceover", label: "Generate voiceover via ElevenLabs",         status: "pending" },
+  { id: "image",     label: "Generate background image via Kie.ai",     status: "pending" },
+  { id: "music",     label: "Generate & mix background music via Suno",  status: "pending" },
+  { id: "render",    label: "Render video in Remotion",                  status: "pending" },
+  { id: "done",      label: "Your video is ready",                       status: "pending" },
 ];
+
+// 📘 Builds the steps array for a resume — marking already-completed steps as "done".
+function buildResumeSteps(cp: PromoCheckpoint): Step[] {
+  if (!cp.lastCompletedStep) return [...INITIAL_STEPS];
+  const completedIndex = STEP_ORDER.indexOf(cp.lastCompletedStep);
+  return INITIAL_STEPS.map((s) => {
+    const idx = STEP_ORDER.indexOf(s.id as CheckpointStep);
+    if (idx !== -1 && idx <= completedIndex) return { ...s, status: "done" as const };
+    return s;
+  });
+}
 
 export default function PromoPage() {
   // 📘 'phase' controls what's visible — chat, brief review, production, or done.
@@ -47,6 +121,17 @@ export default function PromoPage() {
   // 📘 'videoUrl' holds the path to the finished MP4 once Remotion is done.
   const [videoUrl, setVideoUrl] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+
+  // 📘 Persisted checkpoint — null means no in-progress session to resume.
+  const [checkpoint, setCheckpoint] = useState<PromoCheckpoint | null>(null);
+
+  // 📘 useEffect runs only in the browser (not during server-side rendering).
+  // This is where we safely access localStorage to restore any saved checkpoint.
+  // 🔗 React useEffect: https://www.w3schools.com/react/react_useeffect.asp
+  useEffect(() => {
+    const cp = loadCheckpoint();
+    if (cp) setCheckpoint(cp);
+  }, []);
 
   // 📘 Helper — updates a single step without touching the others.
   // 'Partial<Step>' means we only need to pass the fields we're changing.
@@ -79,97 +164,138 @@ export default function PromoPage() {
     }
   }
 
-  // 📘 Called when the user clicks "Approve" — kicks off the real production pipeline.
-  // Each step calls an API route, updates the tracker, then passes data to the next step.
+  // 📘 Called when the user clicks "Approve" or resumes from a checkpoint.
+  // An optional checkpoint lets the function skip steps that already succeeded.
   // 🔗 async/await: https://www.w3schools.com/js/js_async.asp
-  async function handleApprove() {
+  async function handleApprove(cp?: PromoCheckpoint) {
     setPhase("production");
-    setSteps(INITIAL_STEPS);
     setError(null);
     setVideoUrl(null);
 
-    // 📘 Generate a unique ID for this job — used to name the output files.
-    // uuidv4() creates a string like "550e8400-e29b-41d4-a716-446655440000".
-    const jobId = uuidv4();
+    // 📘 Use data from the checkpoint if resuming, otherwise start fresh.
+    const jobId = cp?.jobId ?? uuidv4();
+    const currentBrief = cp?.brief ?? brief;
+
+    let production = cp?.production;
+    let voiceSrc = cp?.voiceSrc;
+    let backgroundImageSrc = cp?.backgroundImageSrc;
+    let finalAudioSrc = cp?.finalAudioSrc;
+
+    setSteps(cp ? buildResumeSteps(cp) : INITIAL_STEPS);
 
     try {
       // ── Step 1: Parse the brief ──
-      updateStep("parse", { status: "running" });
+      if (!isCompleted(cp?.lastCompletedStep, "parse")) {
+        updateStep("parse", { status: "running" });
 
-      const parseRes = await fetch("/api/promo/parse", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ brief }),
-      });
-
-      const parseData = await parseRes.json();
-      if (!parseRes.ok) throw new Error(parseData.error ?? "Brief parsing failed");
-
-      const production = parseData.production;
-      updateStep("parse", {
-        status: "done",
-        detail: `${production.brandName} · ${production.durationSeconds}s script`,
-      });
-
-      // ── Step 2: Generate voiceover ──
-      updateStep("voiceover", { status: "running", detail: "Sending to ElevenLabs…" });
-
-      const voRes = await fetch("/api/promo/voiceover", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ script: production.script, jobId }),
-      });
-
-      const voData = await voRes.json();
-      if (!voRes.ok) throw new Error(voData.error ?? "Voiceover generation failed");
-
-      updateStep("voiceover", { status: "done", detail: "MP3 saved" });
-
-      // ── Step 3: Generate background image via Kie.ai ──
-      // 📘 This step is non-fatal — if it fails we fall back to a CSS gradient background.
-      updateStep("image", { status: "running", detail: "Submitting to Kie.ai…" });
-      let backgroundImageSrc: string | undefined;
-      try {
-        const imgRes = await fetch("/api/promo/image", {
+        const parseRes = await fetch("/api/promo/parse", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ jobId, imagePrompt: production.imagePrompt }),
+          body: JSON.stringify({ brief: currentBrief }),
         });
-        const imgData = await imgRes.json();
-        if (!imgRes.ok) throw new Error(imgData.error ?? "Image generation failed");
-        backgroundImageSrc = imgData.imageSrc;
-        updateStep("image", { status: "done", detail: "Background image ready" });
-      } catch (imgErr) {
-        // Non-fatal — log the error but continue with gradient fallback
-        updateStep("image", {
-          status: "error",
-          detail: `Skipped — using gradient (${imgErr instanceof Error ? imgErr.message : "error"})`,
+
+        const parseData = await parseRes.json();
+        if (!parseRes.ok) throw new Error(parseData.error ?? "Brief parsing failed");
+
+        production = parseData.production;
+        updateStep("parse", {
+          status: "done",
+          detail: `${production!.brandName} · ${production!.durationSeconds}s script`,
         });
+
+        const saved: PromoCheckpoint = {
+          timestamp: Date.now(), lastCompletedStep: "parse",
+          brief: currentBrief, jobId, production,
+        };
+        saveCheckpoint(saved);
+        setCheckpoint(saved);
       }
 
-      // ── Step 4: Generate & mix background music via Suno ──
-      // 📘 Also non-fatal — if music fails we render with voiceover-only audio.
-      updateStep("music", { status: "running", detail: "Submitting to Suno…" });
-      let finalAudioSrc = voData.voiceSrc; // default: voiceover only
-      try {
-        const musicRes = await fetch("/api/promo/music", {
+      // ── Step 2: Generate voiceover ──
+      if (!isCompleted(cp?.lastCompletedStep, "voiceover")) {
+        updateStep("voiceover", { status: "running", detail: "Sending to ElevenLabs…" });
+
+        const voRes = await fetch("/api/promo/voiceover", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            jobId,
-            voiceSrc: voData.voiceSrc,
-            musicPrompt: production.musicPrompt,
-          }),
+          body: JSON.stringify({ script: production!.script, jobId }),
         });
-        const musicData = await musicRes.json();
-        if (!musicRes.ok) throw new Error(musicData.error ?? "Music generation failed");
-        finalAudioSrc = musicData.mixedAudioSrc;
-        updateStep("music", { status: "done", detail: "Music mixed with voiceover" });
-      } catch (musicErr) {
-        updateStep("music", {
-          status: "error",
-          detail: `Skipped — voiceover only (${musicErr instanceof Error ? musicErr.message : "error"})`,
-        });
+
+        const voData = await voRes.json();
+        if (!voRes.ok) throw new Error(voData.error ?? "Voiceover generation failed");
+
+        voiceSrc = voData.voiceSrc;
+        finalAudioSrc = voiceSrc; // default: voiceover only, until music is mixed in
+        updateStep("voiceover", { status: "done", detail: "MP3 saved" });
+
+        const saved: PromoCheckpoint = {
+          timestamp: Date.now(), lastCompletedStep: "voiceover",
+          brief: currentBrief, jobId, production, voiceSrc,
+        };
+        saveCheckpoint(saved);
+        setCheckpoint(saved);
+      } else {
+        finalAudioSrc = voiceSrc; // carry forward from checkpoint before music step
+      }
+
+      // ── Step 3: Generate background image via Kie.ai (non-fatal) ──
+      // 📘 This step is non-fatal — if it fails the pipeline continues with a CSS gradient.
+      if (!isCompleted(cp?.lastCompletedStep, "image")) {
+        updateStep("image", { status: "running", detail: "Submitting to Kie.ai…" });
+        try {
+          const imgRes = await fetch("/api/promo/image", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ jobId, imagePrompt: production!.imagePrompt }),
+          });
+          const imgData = await imgRes.json();
+          if (!imgRes.ok) throw new Error(imgData.error ?? "Image generation failed");
+          backgroundImageSrc = imgData.imageSrc;
+          updateStep("image", { status: "done", detail: "Background image ready" });
+        } catch (imgErr) {
+          // Non-fatal — log and continue; renderer will use gradient background
+          updateStep("image", {
+            status: "error",
+            detail: `Skipped — using gradient (${imgErr instanceof Error ? imgErr.message : "error"})`,
+          });
+        }
+
+        const saved: PromoCheckpoint = {
+          timestamp: Date.now(), lastCompletedStep: "image",
+          brief: currentBrief, jobId, production, voiceSrc, backgroundImageSrc, finalAudioSrc,
+        };
+        saveCheckpoint(saved);
+        setCheckpoint(saved);
+      }
+
+      // ── Step 4: Generate & mix background music via Suno (non-fatal) ──
+      // 📘 Also non-fatal — if music fails we render with voiceover-only audio.
+      if (!isCompleted(cp?.lastCompletedStep, "music")) {
+        updateStep("music", { status: "running", detail: "Submitting to Suno…" });
+        try {
+          const musicRes = await fetch("/api/promo/music", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ jobId, voiceSrc, musicPrompt: production!.musicPrompt }),
+          });
+          const musicData = await musicRes.json();
+          if (!musicRes.ok) throw new Error(musicData.error ?? "Music generation failed");
+          finalAudioSrc = musicData.mixedAudioSrc;
+          updateStep("music", { status: "done", detail: "Music mixed with voiceover" });
+        } catch (musicErr) {
+          // Non-fatal — log and continue; renderer will use voiceover-only audio
+          updateStep("music", {
+            status: "error",
+            detail: `Skipped — voiceover only (${musicErr instanceof Error ? musicErr.message : "error"})`,
+          });
+        }
+
+        const saved: PromoCheckpoint = {
+          timestamp: Date.now(), lastCompletedStep: "music",
+          brief: currentBrief, jobId, production, voiceSrc, backgroundImageSrc, finalAudioSrc,
+        };
+        saveCheckpoint(saved);
+        setCheckpoint(saved);
       }
 
       // ── Step 5: Render in Remotion ──
@@ -178,12 +304,7 @@ export default function PromoPage() {
       const renderRes = await fetch("/api/promo/render", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          jobId,
-          production,
-          voiceSrc: finalAudioSrc,
-          backgroundImageSrc,
-        }),
+        body: JSON.stringify({ jobId, production, voiceSrc: finalAudioSrc, backgroundImageSrc }),
       });
 
       const renderData = await renderRes.json();
@@ -194,6 +315,9 @@ export default function PromoPage() {
 
       setVideoUrl(renderData.url);
       setPhase("done");
+      // 📘 Pipeline complete — clear checkpoint so no stale resume card appears next visit.
+      clearCheckpoint();
+      setCheckpoint(null);
     } catch (err) {
       const message = err instanceof Error ? err.message : "Unknown error";
       setError(message);
@@ -204,6 +328,50 @@ export default function PromoPage() {
         )
       );
     }
+  }
+
+  // 📘 Step-level retry — trims the checkpoint back to just before the failed step
+  // so the pipeline re-runs only the failed step and everything after it.
+  function handleRetry(stepId: string) {
+    if (!checkpoint) return;
+
+    const trimmed: PromoCheckpoint = { ...checkpoint, timestamp: Date.now() };
+
+    // 📘 Remove data for the retried step and all steps that came after it.
+    // The pipeline will re-fetch that data on the next run.
+    switch (stepId) {
+      case "parse":
+        trimmed.lastCompletedStep = undefined;
+        delete trimmed.production;
+        delete trimmed.voiceSrc;
+        delete trimmed.backgroundImageSrc;
+        delete trimmed.finalAudioSrc;
+        break;
+      case "voiceover":
+        trimmed.lastCompletedStep = "parse";
+        delete trimmed.voiceSrc;
+        delete trimmed.backgroundImageSrc;
+        delete trimmed.finalAudioSrc;
+        break;
+      case "image":
+        trimmed.lastCompletedStep = "voiceover";
+        delete trimmed.backgroundImageSrc;
+        delete trimmed.finalAudioSrc;
+        break;
+      case "music":
+        trimmed.lastCompletedStep = "image";
+        delete trimmed.finalAudioSrc;
+        break;
+      case "render":
+        trimmed.lastCompletedStep = "music";
+        break;
+      default:
+        return;
+    }
+
+    saveCheckpoint(trimmed);
+    setCheckpoint(trimmed);
+    handleApprove(trimmed);
   }
 
   function handleRevise() {
@@ -261,24 +429,67 @@ export default function PromoPage() {
 
         {/* ── Phase 1: Discovery Chat ── */}
         {phase === "chat" && (
-          <div
-            className="flex-1 rounded-2xl overflow-hidden flex flex-col"
-            style={{
-              border: "1px solid var(--color-border)",
-              backgroundColor: "var(--color-surface)",
-              minHeight: "600px",
-            }}
-          >
-            <div className="px-5 py-4 border-b" style={{ borderColor: "var(--color-border)" }}>
-              <h1 className="font-semibold" style={{ color: "var(--color-text)" }}>
-                Phase 1 — Discovery
-              </h1>
-              <p className="text-xs mt-1" style={{ color: "var(--color-muted)" }}>
-                Answer Claude's questions. When it has enough, it'll offer to build your brief.
-              </p>
+          <>
+            {/* 📘 Resume card — shown when a previous session was interrupted mid-pipeline.
+                The user can jump straight back into production without redoing the chat. */}
+            {checkpoint && (
+              <div
+                className="rounded-xl p-4 flex items-center justify-between gap-4"
+                style={{
+                  backgroundColor: "rgba(124,58,237,0.08)",
+                  border: "1px solid var(--color-accent)",
+                }}
+              >
+                <div>
+                  <p className="text-sm font-semibold" style={{ color: "var(--color-text)" }}>
+                    Resume previous session?
+                  </p>
+                  <p className="text-xs mt-0.5" style={{ color: "var(--color-muted)" }}>
+                    Last step: {checkpoint.lastCompletedStep ?? "not started"} · {timeAgo(checkpoint.timestamp)}
+                  </p>
+                </div>
+                <div className="flex gap-2">
+                  <button
+                    onClick={() => handleApprove(checkpoint)}
+                    className="text-xs px-4 py-2 rounded-lg font-semibold text-white"
+                    style={{ backgroundColor: "var(--color-accent)" }}
+                  >
+                    Resume
+                  </button>
+                  <button
+                    onClick={() => { clearCheckpoint(); setCheckpoint(null); }}
+                    className="text-xs px-4 py-2 rounded-lg font-medium"
+                    style={{
+                      backgroundColor: "var(--color-surface)",
+                      color: "var(--color-muted)",
+                      border: "1px solid var(--color-border)",
+                    }}
+                  >
+                    Discard
+                  </button>
+                </div>
+              </div>
+            )}
+
+            <div
+              className="flex-1 rounded-2xl overflow-hidden flex flex-col"
+              style={{
+                border: "1px solid var(--color-border)",
+                backgroundColor: "var(--color-surface)",
+                minHeight: "600px",
+              }}
+            >
+              <div className="px-5 py-4 border-b" style={{ borderColor: "var(--color-border)" }}>
+                <h1 className="font-semibold" style={{ color: "var(--color-text)" }}>
+                  Phase 1 — Discovery
+                </h1>
+                <p className="text-xs mt-1" style={{ color: "var(--color-muted)" }}>
+                  Answer Claude&apos;s questions. When it has enough, it&apos;ll offer to build your brief.
+                </p>
+              </div>
+              <ChatInterface onBriefReady={handleBriefReady} />
             </div>
-            <ChatInterface onBriefReady={handleBriefReady} />
-          </div>
+          </>
         )}
 
         {/* ── Phase 2: Brief Review ── */}
@@ -328,8 +539,9 @@ export default function PromoPage() {
               </p>
             </div>
 
-            {/* 📘 ProgressTracker shows real-time step status from the pipeline. */}
-            <ProgressTracker steps={steps} />
+            {/* 📘 ProgressTracker shows real-time step status.
+                onRetry lets the user re-run just the failed step without starting over. */}
+            <ProgressTracker steps={steps} onRetry={handleRetry} />
 
             {/* ── Error message ── */}
             {error && (
@@ -369,6 +581,8 @@ export default function PromoPage() {
                       setBrief("");
                       setVideoUrl(null);
                       setSteps(INITIAL_STEPS);
+                      clearCheckpoint();
+                      setCheckpoint(null);
                     }}
                     className="flex-1 py-3 rounded-xl font-semibold"
                     style={{

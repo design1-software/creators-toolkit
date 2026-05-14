@@ -1,192 +1,300 @@
 "use client";
 // 📘 WHAT THIS FILE DOES: The Short-Form Video Enhancement page.
-// The full pipeline runs here, step by step:
-//   1. User uploads a video
-//   2. FFprobe analyzes it + FFmpeg extracts and normalizes audio
-//   3. Whisper transcribes the audio to word-level timestamps
-//   4. Claude reads the transcript and identifies kinetic moments + Ken Burns zones
-//   5. Remotion renders the enhanced MP4
-//   6. User downloads the finished video
-// URL: http://localhost:3000/short-form
-// 🔗 React state: https://www.w3schools.com/react/react_usestate.asp
+// Full pipeline: Upload → Analyze → Transcribe → Enhance (Claude) → Render (Remotion)
+//
+// CHECKPOINT SYSTEM: After each step succeeds, the result is saved to localStorage.
+// If the pipeline crashes, the user can resume from the last successful step rather
+// than starting over. Checkpoints expire after 1 hour (Railway restarts clear server files).
+// 🔗 localStorage: https://www.w3schools.com/jsref/prop_win_localstorage.asp
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import Link from "next/link";
 import FileUpload from "@/components/FileUpload";
 import ProgressTracker, { type Step } from "@/components/ProgressTracker";
 import type { WordTimestamp } from "@/lib/whisper";
 import type { KenBurnsZone, KineticPhrase, LowerThird, VideoInfo } from "@/lib/types";
 
-// 📘 Define the initial steps for the progress tracker.
-// All start as "pending" — we update them one by one as each step runs.
+// ── Checkpoint types ────────────────────────────────────────────────────────
+
+// 📘 This type holds everything the pipeline has computed so far.
+// Each field is optional because the checkpoint is built up step by step —
+// after upload we only have jobId/filePath; after enhance we have everything.
+type ShortFormCheckpoint = {
+  timestamp: number;        // when the checkpoint was last saved (Unix ms)
+  lastCompletedStep: "upload" | "analyze" | "transcribe" | "enhance";
+  fileName: string;         // shown in the resume card so the user recognizes the job
+  // Accumulated after each step:
+  jobId: string;
+  filePath: string;
+  videoInfo?: VideoInfo;
+  audioPath?: string;
+  words?: WordTimestamp[];
+  kenBurnsZones?: KenBurnsZone[];
+  kineticPhrases?: KineticPhrase[];
+  lowerThirds?: LowerThird[];
+  palette?: { from: string; to: string };
+  title?: string;
+  summary?: string;
+  hookStrength?: string;
+};
+
+// ── Checkpoint helpers ──────────────────────────────────────────────────────
+
+const CHECKPOINT_KEY = "creators_toolkit_short_form";
+// 📘 1 hour — Railway restarts clear the server's file system, so files older
+// than this are very likely gone and the checkpoint would fail anyway.
+const MAX_AGE_MS = 60 * 60 * 1000;
+
+// 📘 The order of steps — used to decide which steps to mark "done" on resume.
+const STEP_ORDER = ["upload", "analyze", "transcribe", "enhance"] as const;
+type CompletedStep = typeof STEP_ORDER[number];
+
+function saveCheckpoint(data: ShortFormCheckpoint) {
+  try { localStorage.setItem(CHECKPOINT_KEY, JSON.stringify(data)); } catch {}
+}
+
+function loadCheckpoint(): ShortFormCheckpoint | null {
+  try {
+    const raw = localStorage.getItem(CHECKPOINT_KEY);
+    if (!raw) return null;
+    const data = JSON.parse(raw) as ShortFormCheckpoint;
+    // 📘 Discard stale checkpoints — server files won't exist after a Railway restart.
+    if (Date.now() - data.timestamp > MAX_AGE_MS) {
+      localStorage.removeItem(CHECKPOINT_KEY);
+      return null;
+    }
+    return data;
+  } catch { return null; }
+}
+
+function clearCheckpoint() {
+  try { localStorage.removeItem(CHECKPOINT_KEY); } catch {}
+}
+
+// 📘 Returns true if stepId was already completed in the checkpoint.
+// Used to pre-mark steps as "done" when resuming.
+function isCompleted(stepId: string, lastCompleted: CompletedStep): boolean {
+  const lastIdx = STEP_ORDER.indexOf(lastCompleted);
+  const stepIdx = STEP_ORDER.indexOf(stepId as CompletedStep);
+  return stepIdx !== -1 && stepIdx <= lastIdx;
+}
+
+// 📘 Relative time label — e.g. "4 minutes ago" — shown in the resume card.
+function timeAgo(timestamp: number): string {
+  const mins = Math.floor((Date.now() - timestamp) / 60000);
+  if (mins < 1) return "just now";
+  if (mins === 1) return "1 minute ago";
+  if (mins < 60) return `${mins} minutes ago`;
+  return `${Math.floor(mins / 60)} hour${Math.floor(mins / 60) > 1 ? "s" : ""} ago`;
+}
+
+// ── Step definitions ────────────────────────────────────────────────────────
+
 const INITIAL_STEPS: Step[] = [
-  { id: "upload",     label: "Upload video",                       status: "pending" },
-  { id: "analyze",    label: "Analyze video + normalize audio",    status: "pending" },
-  { id: "transcribe", label: "Transcribe speech with Whisper",     status: "pending" },
-  { id: "enhance",    label: "Claude identifies key moments",      status: "pending" },
-  { id: "render",     label: "Remotion renders enhanced MP4",      status: "pending" },
+  { id: "upload",     label: "Upload video",                    status: "pending" },
+  { id: "analyze",    label: "Analyze video + normalize audio", status: "pending" },
+  { id: "transcribe", label: "Transcribe speech with Whisper",  status: "pending" },
+  { id: "enhance",    label: "Claude identifies key moments",   status: "pending" },
+  { id: "render",     label: "Remotion renders enhanced MP4",   status: "pending" },
 ];
 
+// ── Page component ──────────────────────────────────────────────────────────
+
 export default function ShortFormPage() {
-  // 📘 'steps' drives the ProgressTracker UI — we clone and update it as each step runs.
   const [steps, setSteps] = useState<Step[]>(INITIAL_STEPS);
-
-  // 📘 'phase' controls what the user sees: the uploader or the progress tracker.
   const [phase, setPhase] = useState<"upload" | "processing" | "done">("upload");
-
-  // 📘 These store results that get passed forward to the next step in the pipeline.
-  const [jobId, setJobId] = useState("");
-  const [filePath, setFilePath] = useState("");
-  const [videoInfo, setVideoInfo] = useState<VideoInfo | null>(null);
-  const [words, setWords] = useState<WordTimestamp[]>([]);
   const [videoUrl, setVideoUrl] = useState("");
   const [summary, setSummary] = useState("");
-  // 📘 hookStrength is returned by Claude in the enhance step ("strong"|"medium"|"weak").
-  // We store it in state so the UI can react to it, and in a local variable so it can
-  // be forwarded to the render step without React's async state batching causing a stale read.
-  const [hookStrength, setHookStrength] = useState("");
 
-  // 📘 A helper that updates one step's status and optional detail text.
-  // We use the "functional update" form of setSteps to always work with the latest state.
+  // 📘 checkpoint is loaded from localStorage on mount (client-side only).
+  // null means no in-progress job to resume.
+  const [checkpoint, setCheckpoint] = useState<ShortFormCheckpoint | null>(null);
+
+  // 📘 useEffect runs once after the component mounts in the browser.
+  // We can't read localStorage during server-side rendering, so this is the right place.
+  // 🔗 useEffect: https://www.w3schools.com/react/react_useeffect.asp
+  useEffect(() => {
+    setCheckpoint(loadCheckpoint());
+  }, []);
+
   function updateStep(id: string, status: Step["status"], detail?: string) {
     setSteps((prev) =>
       prev.map((s) => (s.id === id ? { ...s, status, detail } : s))
-      // ↑ .map() returns a new array. For the matching step, spread the old values
-      //   and override status + detail. For all others, return them unchanged.
     );
   }
 
-  // 📘 The main pipeline function — runs all 5 steps in sequence.
-  // 'async' because each step calls an API route and must wait for the response.
-  // 🔗 Async/await: https://www.w3schools.com/js/js_async.asp
-  async function runPipeline(file: File) {
+  // 📘 Builds the initial steps array for a resume — pre-marks completed steps as "done".
+  function buildResumeSteps(cp: ShortFormCheckpoint): Step[] {
+    return INITIAL_STEPS.map((s) =>
+      isCompleted(s.id, cp.lastCompletedStep)
+        ? { ...s, status: "done" as const }
+        : s
+    );
+  }
+
+  // ── Main pipeline ──────────────────────────────────────────────────────────
+  // 📘 'file' is null when resuming — the video is already on the server.
+  // 'cp' is the saved checkpoint to continue from. If null, start from scratch.
+  async function runPipeline(file: File | null, cp?: ShortFormCheckpoint) {
     setPhase("processing");
+    setVideoUrl("");
+    setSummary("");
 
-    // 📘 WHY local variables instead of React state for pipeline data:
-    // React state updates (setJobId, setFilePath, etc.) are asynchronous — they schedule
-    // a re-render but do NOT update the variable inside this running function.
-    // If we read `jobId` or `filePath` (the state variables) in step 2, they are still ""
-    // because the re-render from step 1 hasn't happened yet.
-    // Storing values in local variables is the correct pattern for passing data
-    // between steps inside a single async function.
-    // 🔗 React state batching: https://www.w3schools.com/react/react_hooks.asp
-    let currentJobId = "";
-    let currentFilePath = "";
-    let currentVideoInfo: VideoInfo | null = null;
-    // 📘 Local copies of Claude's analysis results — React state updates are async,
-    // so reading the state variables after setSummary/setHookStrength inside this
-    // function would still return the old values. Local variables update immediately.
-    let currentSummary = "";
-    let currentHookStrength = "";
-    let currentTitle = "";
+    // 📘 Show completed steps as "done" immediately when resuming.
+    setSteps(cp ? buildResumeSteps(cp) : INITIAL_STEPS);
 
-    // ── Step 1: Upload ────────────────────────────────────────────────────────
-    updateStep("upload", "running");
-    try {
-      // 📘 FormData is the browser's way to send files in an HTTP request.
-      // We append the file under the key "video" — matching what the route expects.
-      const form = new FormData();
-      form.append("video", file);
+    // 📘 Local variables hold data between steps. React state is async — if we
+    // called setJobId() and then read jobId on the next line, it would still be "".
+    // 🔗 Why local variables: https://www.w3schools.com/react/react_usestate.asp
+    let currentJobId       = cp?.jobId       ?? "";
+    let currentFilePath    = cp?.filePath     ?? "";
+    let currentVideoInfo   = cp?.videoInfo    ?? null;
+    let audioPath          = cp?.audioPath    ?? "";
+    let transcribedWords   = cp?.words        ?? [];
+    let kenBurnsZones      = cp?.kenBurnsZones    ?? [];
+    let kineticPhrases     = cp?.kineticPhrases   ?? [];
+    let lowerThirds        = cp?.lowerThirds      ?? [];
+    let currentPalette     = cp?.palette      ?? { from: "#a855f7", to: "#050008" };
+    let currentSummary     = cp?.summary      ?? "";
+    let currentHookStrength = cp?.hookStrength ?? "medium";
+    let currentTitle       = cp?.title        ?? "";
 
-      const res = await fetch("/api/short-form/upload", { method: "POST", body: form });
+    // ── Step 1: Upload ──────────────────────────────────────────────────────
+    if (!cp?.jobId) {
+      updateStep("upload", "running");
+      try {
+        const form = new FormData();
+        form.append("video", file!);
+        const res = await fetch("/api/short-form/upload", { method: "POST", body: form });
+        const text = await res.text();
+        let data: Record<string, string> = {};
+        try { data = JSON.parse(text); } catch {}
+        if (!res.ok) throw new Error(data.error || `Upload failed (HTTP ${res.status})`);
 
-      // 📘 Parse the JSON body safely — if the server returns a non-JSON error
-      // (e.g. a framework-level 400 before our handler runs), res.json() throws.
-      // We read as text first so we always get a readable error message.
-      // 🔗 fetch API: https://www.w3schools.com/js/js_api_fetch.asp
-      const text = await res.text();
-      let data: Record<string, string> = {};
-      try { data = JSON.parse(text); } catch { /* non-JSON body — data stays empty */ }
+        currentJobId = data.jobId;
+        currentFilePath = data.filePath;
 
-      if (!res.ok) throw new Error(data.error || `Upload failed (HTTP ${res.status})`);
-
-      // 📘 Save to local variables for use in later steps, AND to React state for the UI.
-      currentJobId = data.jobId;
-      currentFilePath = data.filePath;
-      setJobId(data.jobId);
-      setFilePath(data.filePath);
-      updateStep("upload", "done", `Saved as ${data.fileName}`);
-    } catch (err) {
-      updateStep("upload", "error", String(err));
-      return; // stop the pipeline on any error
+        // 📘 Save checkpoint immediately after each step so a crash in a later step
+        // doesn't lose this step's work.
+        saveCheckpoint({
+          timestamp: Date.now(),
+          lastCompletedStep: "upload",
+          fileName: data.fileName,
+          jobId: currentJobId,
+          filePath: currentFilePath,
+        });
+        setCheckpoint(loadCheckpoint());
+        updateStep("upload", "done", `Saved as ${data.fileName}`);
+      } catch (err) {
+        updateStep("upload", "error", String(err));
+        return;
+      }
     }
 
-    // ── Step 2: Analyze ───────────────────────────────────────────────────────
-    updateStep("analyze", "running");
-    let audioPath = "";
-    try {
-      const analyzeRes = await fetch("/api/short-form/analyze", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ filePath: currentFilePath, jobId: currentJobId }),
-      });
-      const data = await analyzeRes.json();
-      if (!analyzeRes.ok) throw new Error(data.error);
+    // ── Step 2: Analyze ─────────────────────────────────────────────────────
+    if (!cp?.videoInfo) {
+      updateStep("analyze", "running");
+      try {
+        const res = await fetch("/api/short-form/analyze", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ filePath: currentFilePath, jobId: currentJobId }),
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error);
 
-      // 📘 Save videoInfo to a local variable for later steps, and to state for the UI.
-      currentVideoInfo = data.videoInfo;
-      setVideoInfo(data.videoInfo);
-      audioPath = data.audioPath;
-      updateStep("analyze", "done", `${data.videoInfo.duration.toFixed(1)}s · ${data.videoInfo.fps}fps · ${data.videoInfo.width}×${data.videoInfo.height}`);
-    } catch (err) {
-      updateStep("analyze", "error", String(err));
-      return;
+        currentVideoInfo = data.videoInfo;
+        audioPath = data.audioPath;
+
+        saveCheckpoint({
+          ...loadCheckpoint()!,
+          timestamp: Date.now(),
+          lastCompletedStep: "analyze",
+          videoInfo: currentVideoInfo!,
+          audioPath,
+        });
+        setCheckpoint(loadCheckpoint());
+        updateStep("analyze", "done",
+          `${data.videoInfo.duration.toFixed(1)}s · ${data.videoInfo.fps}fps · ${data.videoInfo.width}×${data.videoInfo.height}`);
+      } catch (err) {
+        updateStep("analyze", "error", String(err));
+        return;
+      }
     }
 
-    // ── Step 3: Transcribe ────────────────────────────────────────────────────
-    updateStep("transcribe", "running");
-    let transcribedWords: WordTimestamp[] = [];
-    try {
-      const res = await fetch("/api/short-form/transcribe", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ audioPath, jobId: currentJobId }),
-      });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error);
+    // ── Step 3: Transcribe ──────────────────────────────────────────────────
+    if (!cp?.words?.length) {
+      updateStep("transcribe", "running");
+      try {
+        const res = await fetch("/api/short-form/transcribe", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ audioPath, jobId: currentJobId }),
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error);
 
-      transcribedWords = data.words;
-      setWords(data.words);
-      updateStep("transcribe", "done", `${data.wordCount} words transcribed`);
-    } catch (err) {
-      updateStep("transcribe", "error", String(err));
-      return;
+        transcribedWords = data.words;
+
+        saveCheckpoint({
+          ...loadCheckpoint()!,
+          timestamp: Date.now(),
+          lastCompletedStep: "transcribe",
+          words: transcribedWords,
+        });
+        setCheckpoint(loadCheckpoint());
+        updateStep("transcribe", "done", `${data.wordCount} words transcribed`);
+      } catch (err) {
+        updateStep("transcribe", "error", String(err));
+        return;
+      }
     }
 
-    // ── Step 4: Enhance (Claude analysis) ────────────────────────────────────
-    updateStep("enhance", "running");
-    let kenBurnsZones: KenBurnsZone[] = [];
-    let kineticPhrases: KineticPhrase[] = [];
-    let lowerThirds: LowerThird[] = [];
-    let currentPalette: { from: string; to: string } = { from: "#a855f7", to: "#050008" };
-    try {
-      const res = await fetch("/api/short-form/enhance", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ words: transcribedWords, videoInfo: currentVideoInfo, filePath: currentFilePath }),
-      });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error);
+    // ── Step 4: Enhance ─────────────────────────────────────────────────────
+    if (!cp?.kineticPhrases) {
+      updateStep("enhance", "running");
+      try {
+        const res = await fetch("/api/short-form/enhance", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ words: transcribedWords, videoInfo: currentVideoInfo, filePath: currentFilePath }),
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error);
 
-      kenBurnsZones = data.kenBurnsZones;
-      kineticPhrases = data.kineticPhrases;
-      // 📘 lowerThirds may be absent in older Claude responses — default to empty array.
-      lowerThirds = data.lowerThirds || [];
-      // 📘 Palette drives the intro card's dynamic background — Claude picks a vivid
-      // center colour per video. Fall back to purple if the field is missing.
-      currentPalette = data.palette || { from: "#a855f7", to: "#050008" };
-      currentSummary = data.summary || "";
-      currentHookStrength = data.hookStrength || "medium";
-      currentTitle = data.title || "";
-      setSummary(currentSummary);
-      setHookStrength(currentHookStrength);
-      updateStep("enhance", "done", `${kineticPhrases.length} kinetic phrases · ${kenBurnsZones.length} Ken Burns zones · ${lowerThirds.length} lower thirds · Hook: ${data.hookStrength}`);
-    } catch (err) {
-      updateStep("enhance", "error", String(err));
-      return;
+        kenBurnsZones   = data.kenBurnsZones;
+        kineticPhrases  = data.kineticPhrases;
+        lowerThirds     = data.lowerThirds || [];
+        currentPalette  = data.palette || { from: "#a855f7", to: "#050008" };
+        currentSummary  = data.summary || "";
+        currentHookStrength = data.hookStrength || "medium";
+        currentTitle    = data.title || "";
+        setSummary(currentSummary);
+
+        saveCheckpoint({
+          ...loadCheckpoint()!,
+          timestamp: Date.now(),
+          lastCompletedStep: "enhance",
+          kenBurnsZones,
+          kineticPhrases,
+          lowerThirds,
+          palette: currentPalette,
+          title: currentTitle,
+          summary: currentSummary,
+          hookStrength: currentHookStrength,
+        });
+        setCheckpoint(loadCheckpoint());
+        updateStep("enhance", "done",
+          `${kineticPhrases.length} kinetic · ${kenBurnsZones.length} Ken Burns · ${lowerThirds.length} lower thirds · Hook: ${data.hookStrength}`);
+      } catch (err) {
+        updateStep("enhance", "error", String(err));
+        return;
+      }
     }
 
-    // ── Step 5: Render ────────────────────────────────────────────────────────
+    // ── Step 5: Render ──────────────────────────────────────────────────────
+    // 📘 Render always runs — it's the most likely step to fail and the whole
+    // point of the checkpoint system is to avoid re-doing everything before it.
     updateStep("render", "running");
     try {
       const res = await fetch("/api/short-form/render", {
@@ -201,12 +309,9 @@ export default function ShortFormPage() {
           lowerThirds,
           palette: currentPalette,
           videoInfo: currentVideoInfo,
-          // 📘 Pass Claude's analysis forward so Remotion can render the intro title card.
           summary: currentSummary,
           hookStrength: currentHookStrength,
           title: currentTitle,
-          // 📘 audioPath is the absolute path to the normalized WAV from the analyze step.
-          // The render route converts it to an HTTP URL so Remotion's useAudioData() can fetch it.
           audioPath,
         }),
       });
@@ -216,9 +321,63 @@ export default function ShortFormPage() {
       setVideoUrl(data.url);
       updateStep("render", "done", `Ready: ${data.fileName}`);
       setPhase("done");
+      // 📘 Clear the checkpoint on success — the job is fully complete.
+      clearCheckpoint();
+      setCheckpoint(null);
     } catch (err) {
       updateStep("render", "error", String(err));
     }
+  }
+
+  // 📘 Called by ProgressTracker's Retry button — re-runs from the failed step.
+  // We clear the checkpoint data for the failed step and everything after it,
+  // then call runPipeline with the trimmed checkpoint so it skips what's already done.
+  function handleRetry(stepId: string) {
+    const cp = loadCheckpoint();
+    if (!cp) return;
+
+    // 📘 Build a trimmed checkpoint that stops just before the failed step.
+    // This makes the pipeline re-run from stepId onward.
+    const trimmed: ShortFormCheckpoint = { ...cp, timestamp: Date.now() };
+    if (stepId === "render") {
+      // Everything through enhance is still valid — just re-run render.
+      // No trimming needed; runPipeline will skip steps 1-4 automatically.
+    } else if (stepId === "enhance") {
+      delete trimmed.kineticPhrases;
+      delete trimmed.kenBurnsZones;
+      delete trimmed.lowerThirds;
+      delete trimmed.palette;
+      delete trimmed.title;
+      delete trimmed.summary;
+      delete trimmed.hookStrength;
+      trimmed.lastCompletedStep = "transcribe";
+    } else if (stepId === "transcribe") {
+      delete trimmed.words;
+      delete trimmed.kineticPhrases;
+      delete trimmed.kenBurnsZones;
+      delete trimmed.lowerThirds;
+      delete trimmed.palette;
+      delete trimmed.title;
+      delete trimmed.summary;
+      delete trimmed.hookStrength;
+      trimmed.lastCompletedStep = "analyze";
+    } else if (stepId === "analyze") {
+      delete trimmed.videoInfo;
+      delete trimmed.audioPath;
+      delete trimmed.words;
+      delete trimmed.kineticPhrases;
+      delete trimmed.kenBurnsZones;
+      delete trimmed.lowerThirds;
+      delete trimmed.palette;
+      delete trimmed.title;
+      delete trimmed.summary;
+      delete trimmed.hookStrength;
+      trimmed.lastCompletedStep = "upload";
+    }
+
+    saveCheckpoint(trimmed);
+    setCheckpoint(trimmed);
+    runPipeline(null, trimmed);
   }
 
   return (
@@ -239,7 +398,6 @@ export default function ShortFormPage() {
         </span>
       </nav>
 
-      {/* ── Page Content ── */}
       <div className="flex-1 max-w-2xl mx-auto w-full px-6 py-8 flex flex-col gap-6">
 
         {/* ── Upload Phase ── */}
@@ -255,10 +413,53 @@ export default function ShortFormPage() {
               </p>
             </div>
 
-            {/* 📘 FileUpload component handles drag-and-drop — calls runPipeline when a file is chosen. */}
-            <FileUpload onFile={runPipeline} />
+            {/* 📘 Resume card — shown when a recent checkpoint exists.
+                The user can continue their in-progress job or discard it and start fresh. */}
+            {checkpoint && (
+              <div
+                className="rounded-xl p-4 flex flex-col gap-3"
+                style={{
+                  backgroundColor: "rgba(124,58,237,0.08)",
+                  border: "1px solid var(--color-accent)",
+                }}
+              >
+                <div className="flex items-start justify-between gap-3">
+                  <div>
+                    <p className="text-sm font-semibold" style={{ color: "var(--color-text)" }}>
+                      Resume in-progress job
+                    </p>
+                    <p className="text-xs mt-0.5" style={{ color: "var(--color-muted)" }}>
+                      {checkpoint.fileName} · Stopped after: <strong>{checkpoint.lastCompletedStep}</strong> · {timeAgo(checkpoint.timestamp)}
+                    </p>
+                  </div>
+                </div>
+                <div className="flex gap-2">
+                  <button
+                    onClick={() => runPipeline(null, checkpoint)}
+                    className="flex-1 py-2 rounded-lg text-sm font-semibold text-white"
+                    style={{ backgroundColor: "var(--color-accent)" }}
+                  >
+                    Resume from {checkpoint.lastCompletedStep === "enhance" ? "Render" :
+                                  checkpoint.lastCompletedStep === "transcribe" ? "Claude Enhance" :
+                                  checkpoint.lastCompletedStep === "analyze" ? "Transcribe" : "Analyze"}
+                  </button>
+                  <button
+                    onClick={() => { clearCheckpoint(); setCheckpoint(null); }}
+                    className="py-2 px-4 rounded-lg text-sm font-medium"
+                    style={{
+                      backgroundColor: "var(--color-surface)",
+                      color: "var(--color-muted)",
+                      border: "1px solid var(--color-border)",
+                    }}
+                  >
+                    Discard
+                  </button>
+                </div>
+              </div>
+            )}
 
-            {/* Teaching note */}
+            <FileUpload onFile={(file) => runPipeline(file)} />
+
             <div
               className="rounded-xl p-4 text-xs leading-relaxed"
               style={{
@@ -283,21 +484,15 @@ export default function ShortFormPage() {
                 {phase === "done" ? "Enhancement complete!" : "Enhancing your video..."}
               </h1>
               {summary && (
-                <p className="text-sm" style={{ color: "var(--color-muted)" }}>
-                  {summary}
-                </p>
+                <p className="text-sm" style={{ color: "var(--color-muted)" }}>{summary}</p>
               )}
             </div>
 
-            {/* 📘 ProgressTracker shows each pipeline step and its live status. */}
-            <ProgressTracker steps={steps} />
+            {/* 📘 Pass handleRetry to ProgressTracker — failed steps will show a Retry button. */}
+            <ProgressTracker steps={steps} onRetry={phase === "processing" ? handleRetry : undefined} />
 
-            {/* Video player + download — shown when render is complete */}
             {phase === "done" && videoUrl && (
               <div className="flex flex-col gap-4">
-                {/* 📘 <video> is the HTML5 element for playing video in the browser.
-                    'controls' shows the play/pause/volume bar.
-                    🔗 HTML5 video: https://www.w3schools.com/html/html5_video.asp */}
                 <video
                   src={videoUrl}
                   controls
@@ -314,9 +509,13 @@ export default function ShortFormPage() {
                   >
                     Download MP4
                   </a>
-                  {/* 📘 Reset button returns the user to the upload screen for another video. */}
                   <button
-                    onClick={() => { setPhase("upload"); setSteps(INITIAL_STEPS); setVideoUrl(""); setSummary(""); }}
+                    onClick={() => {
+                      setPhase("upload");
+                      setSteps(INITIAL_STEPS);
+                      setVideoUrl("");
+                      setSummary("");
+                    }}
                     className="flex-1 py-3 rounded-xl font-semibold"
                     style={{
                       backgroundColor: "var(--color-surface)",
