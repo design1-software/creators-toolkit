@@ -44,10 +44,31 @@ export async function POST(req: NextRequest) {
     const outputPath = path.join(outputDir, outputFileName);
 
     // 📘 Calculate how many frames the video should be.
-    // durationSeconds comes from Claude's script-length estimate in the parse step.
-    // Multiply by 30 (the fps) to get total frames.
+    // We measure the actual audio file duration with ffprobe — much more accurate than
+    // trusting Claude's word-count estimate, which is often off by 30–50%.
+    // ffprobe is part of FFmpeg and reports the exact duration in seconds.
+    // Only fall back to Claude's estimate when no audio file is provided.
     // 🔗 JavaScript Math: https://www.w3schools.com/js/js_math.asp
-    const durationSeconds = Math.max(20, Math.min(60, production.durationSeconds ?? 30));
+    let durationSeconds: number;
+    if (voiceSrc) {
+      // 📘 ffprobe reads audio metadata without decoding the whole file — it's very fast.
+      // -v quiet suppresses noisy log output. -of csv=p=0 returns just the number.
+      const voicePath = path.join(remotionProjectPath, "public", voiceSrc);
+      try {
+        const { stdout } = await execAsync(
+          `ffprobe -v quiet -show_entries format=duration -of csv=p=0 "${voicePath}"`
+        );
+        const measured = parseFloat(stdout.trim());
+        durationSeconds = !isNaN(measured) && measured > 0
+          ? Math.ceil(measured)                                   // round up so audio never gets cut off
+          : Math.max(20, Math.min(60, Number(production.durationSeconds) || 30));
+      } catch {
+        // ffprobe not available or file unreadable — fall back to Claude's estimate
+        durationSeconds = Math.max(20, Math.min(60, Number(production.durationSeconds) || 30));
+      }
+    } else {
+      durationSeconds = Math.max(20, Math.min(60, Number(production.durationSeconds) || 30));
+    }
     const durationInFrames = Math.round(durationSeconds * 30);
 
     // 📘 Build the props object — passed to the PromoVideo React component at render time.
