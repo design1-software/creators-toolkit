@@ -6,7 +6,16 @@
 import { NextRequest, NextResponse } from "next/server";
 import Anthropic from "@anthropic-ai/sdk";
 
-const anthropic = new Anthropic();
+// 📘 Lazy initialization — defers client creation to first request so ANTHROPIC_API_KEY
+// is read at runtime, not at build time when the env var isn't available on Railway.
+let _anthropic: Anthropic | null = null;
+function getClient(): Anthropic {
+  if (_anthropic) return _anthropic;
+  const apiKey = process.env.ANTHROPIC_API_KEY;
+  if (!apiKey) throw new Error("ANTHROPIC_API_KEY is not set. Add it to your environment variables.");
+  _anthropic = new Anthropic({ apiKey });
+  return _anthropic;
+}
 
 // 📘 This prompt asks Claude to be a visual director — matching color psychology
 // to the emotional tone of the quote. Different moods deserve different palettes.
@@ -55,7 +64,7 @@ Word count: ${quote.split(" ").length} words
 
 Choose the perfect visual style for this quote video.`;
 
-    const response = await anthropic.messages.create({
+    const response = await getClient().messages.create({
       model: "claude-sonnet-4-6",
       max_tokens: 512,
       system: QUOTE_STYLE_SYSTEM_PROMPT,

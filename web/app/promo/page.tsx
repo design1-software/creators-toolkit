@@ -36,6 +36,9 @@ type PromoCheckpoint = {
   voiceSrc?: string;
   backgroundImageSrc?: string;
   finalAudioSrc?: string;
+  // 📘 Paths (relative to Remotion public/) of images the user uploaded during chat.
+  // When present, the image step uses these directly and skips Kie.ai entirely.
+  uploadedImages?: string[];
 };
 
 const CHECKPOINT_KEY = "creators_toolkit_promo";
@@ -122,6 +125,11 @@ export default function PromoPage() {
   const [videoUrl, setVideoUrl] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
+  // 📘 Images the user uploaded during the discovery chat, saved server-side by /api/brief.
+  // Stored as paths relative to Remotion's public/ folder (e.g. "renders/promo/upload-abc.jpg").
+  // When non-empty, the image step uses these directly and skips Kie.ai.
+  const [uploadedImages, setUploadedImages] = useState<string[]>([]);
+
   // 📘 Persisted checkpoint — null means no in-progress session to resume.
   const [checkpoint, setCheckpoint] = useState<PromoCheckpoint | null>(null);
 
@@ -156,6 +164,9 @@ export default function PromoPage() {
 
       const data = await res.json();
       setBrief(data.brief || "Brief generation failed — please try again.");
+      // 📘 Save the paths of any images the user uploaded during chat.
+      // /api/brief already wrote them to the Remotion public/ folder — we just store the paths.
+      if (Array.isArray(data.uploadedImages)) setUploadedImages(data.uploadedImages);
     } catch (err) {
       console.error("Brief generation error:", err);
       setBrief("Error generating brief. Check your connection and API key.");
@@ -180,6 +191,8 @@ export default function PromoPage() {
     let voiceSrc = cp?.voiceSrc;
     let backgroundImageSrc = cp?.backgroundImageSrc;
     let finalAudioSrc = cp?.finalAudioSrc;
+    // 📘 Use uploaded images from the checkpoint (resume) or from state (fresh run).
+    const currentImages = cp?.uploadedImages ?? uploadedImages;
 
     setSteps(cp ? buildResumeSteps(cp) : INITIAL_STEPS);
 
@@ -205,7 +218,7 @@ export default function PromoPage() {
 
         const saved: PromoCheckpoint = {
           timestamp: Date.now(), lastCompletedStep: "parse",
-          brief: currentBrief, jobId, production,
+          brief: currentBrief, jobId, production, uploadedImages: currentImages,
         };
         saveCheckpoint(saved);
         setCheckpoint(saved);
@@ -230,7 +243,7 @@ export default function PromoPage() {
 
         const saved: PromoCheckpoint = {
           timestamp: Date.now(), lastCompletedStep: "voiceover",
-          brief: currentBrief, jobId, production, voiceSrc,
+          brief: currentBrief, jobId, production, voiceSrc, uploadedImages: currentImages,
         };
         saveCheckpoint(saved);
         setCheckpoint(saved);
@@ -238,31 +251,40 @@ export default function PromoPage() {
         finalAudioSrc = voiceSrc; // carry forward from checkpoint before music step
       }
 
-      // ── Step 3: Generate background image via Kie.ai (non-fatal) ──
-      // 📘 This step is non-fatal — if it fails the pipeline continues with a CSS gradient.
+      // ── Step 3: Background image ──
+      // 📘 If the user uploaded images during chat we use the first one directly —
+      // no AI generation needed and no network call to Kie.ai.
+      // If there are no uploaded images we fall back to Kie.ai (non-fatal: on failure
+      // the pipeline continues and Remotion uses a CSS gradient background instead).
       if (!isCompleted(cp?.lastCompletedStep, "image")) {
-        updateStep("image", { status: "running", detail: "Submitting to Kie.ai…" });
-        try {
-          const imgRes = await fetch("/api/promo/image", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ jobId, imagePrompt: production!.imagePrompt }),
-          });
-          const imgData = await imgRes.json();
-          if (!imgRes.ok) throw new Error(imgData.error ?? "Image generation failed");
-          backgroundImageSrc = imgData.imageSrc;
-          updateStep("image", { status: "done", detail: "Background image ready" });
-        } catch (imgErr) {
-          // Non-fatal — log and continue; renderer will use gradient background
-          updateStep("image", {
-            status: "error",
-            detail: `Skipped — using gradient (${imgErr instanceof Error ? imgErr.message : "error"})`,
-          });
+        if (currentImages.length > 0) {
+          backgroundImageSrc = currentImages[0];
+          updateStep("image", { status: "done", detail: "Using your uploaded image" });
+        } else {
+          updateStep("image", { status: "running", detail: "Submitting to Kie.ai…" });
+          try {
+            const imgRes = await fetch("/api/promo/image", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ jobId, imagePrompt: production!.imagePrompt }),
+            });
+            const imgData = await imgRes.json();
+            if (!imgRes.ok) throw new Error(imgData.error ?? "Image generation failed");
+            backgroundImageSrc = imgData.imageSrc;
+            updateStep("image", { status: "done", detail: "Background image ready" });
+          } catch (imgErr) {
+            // Non-fatal — log and continue; renderer will use gradient background
+            updateStep("image", {
+              status: "error",
+              detail: `Skipped — using gradient (${imgErr instanceof Error ? imgErr.message : "error"})`,
+            });
+          }
         }
 
         const saved: PromoCheckpoint = {
           timestamp: Date.now(), lastCompletedStep: "image",
-          brief: currentBrief, jobId, production, voiceSrc, backgroundImageSrc, finalAudioSrc,
+          brief: currentBrief, jobId, production, voiceSrc, backgroundImageSrc,
+          finalAudioSrc, uploadedImages: currentImages,
         };
         saveCheckpoint(saved);
         setCheckpoint(saved);
@@ -292,7 +314,8 @@ export default function PromoPage() {
 
         const saved: PromoCheckpoint = {
           timestamp: Date.now(), lastCompletedStep: "music",
-          brief: currentBrief, jobId, production, voiceSrc, backgroundImageSrc, finalAudioSrc,
+          brief: currentBrief, jobId, production, voiceSrc, backgroundImageSrc,
+          finalAudioSrc, uploadedImages: currentImages,
         };
         saveCheckpoint(saved);
         setCheckpoint(saved);
