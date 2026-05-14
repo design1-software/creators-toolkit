@@ -25,7 +25,15 @@ Your job is to help the user build a complete creative brief through friendly, f
 - Be warm, encouraging, and decisive — this is a creative session, not a form.
 - When you have enough information, say "I have everything I need. Ready to build your brief?" and wait for confirmation.
 - Use concrete creative language: "punchy and fast-cut," "warm cinematic glow," "calm and authoritative voice."
-- Format your final brief between <BRIEF_START> and <BRIEF_END> tags when the user approves.`;
+- Format your final brief between <BRIEF_START> and <BRIEF_END> tags when the user approves.
+
+## Handling social media URLs and failed fetches:
+Social media platforms (Instagram, TikTok, Twitter/X, Facebook, LinkedIn) block all server-side access — fetching them returns nothing useful. When the user shares a social media URL or handle, or when fetched content shows "Fetch failed" or "no readable text content", NEVER say you cannot access it. Instead, immediately ask them to share the following directly in chat:
+- Their profile bio or about text (copy-paste it)
+- 2-3 of their best-performing post captions or hooks
+- The hashtags they typically use
+- How they'd describe their visual style (colours, vibe, energy)
+This gives you richer, more relevant context than any scrape would. Treat it as a positive — you're getting the curated highlights directly from the creator.`;
 
 // ─────────────────────────────────────────────
 // 📘 URL FETCHING HELPERS
@@ -114,17 +122,38 @@ async function tryOEmbed(url: string, hostname: string): Promise<string> {
   }
 }
 
+// 📘 Social media platforms that block all server-side access.
+// Profile pages on these hosts require JavaScript rendering and login — fetching
+// them server-side always returns either an empty shell or a login wall.
+// We skip the fetch entirely and return a signal for Claude to ask manually instead.
+const SOCIAL_MEDIA_HOSTS = new Set([
+  "instagram.com", "tiktok.com", "facebook.com", "fb.com",
+  "linkedin.com", "threads.net", "snapchat.com", "pinterest.com",
+]);
+
 // 📘 fetchUrlContent() is the main URL fetching function.
 // It tries multiple strategies in order and always returns something useful:
-//   1. oEmbed API (YouTube, TikTok, Twitter/X, Vimeo)
-//   2. Full HTML fetch with meta tag extraction + body text
-//   3. Descriptive fallback message when the site blocks access
+//   1. Skip social media profiles immediately (they block all server-side access)
+//   2. oEmbed API (YouTube, TikTok, Twitter/X, Vimeo — for specific content URLs)
+//   3. Full HTML fetch with meta tag extraction + body text
+//   4. Descriptive fallback message when the site blocks access
 async function fetchUrlContent(url: string): Promise<string> {
   let hostname = "";
   try {
     hostname = new URL(url).hostname.replace(/^www\./, "");
   } catch {
     return ""; // not a valid URL
+  }
+
+  // ── Strategy 0: Social media profile pages — skip the fetch, ask manually ──
+  // 📘 These platforms require JavaScript + login — no server-side fetch will work.
+  // We return a clear signal so Claude knows to ask the user directly.
+  if (SOCIAL_MEDIA_HOSTS.has(hostname)) {
+    return (
+      `[Social media URL: ${url}]\n` +
+      `Server-side fetch is blocked by ${hostname} (requires JavaScript and login). ` +
+      `Ask the user to paste their bio, best post captions, hashtags, and visual style description directly in chat.`
+    );
   }
 
   // ── Strategy 1: oEmbed (structured API data for supported platforms) ──
