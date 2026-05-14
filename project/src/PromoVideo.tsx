@@ -29,14 +29,16 @@ export type PromoVideoProps = {
   gradientTo: string;      // CSS hex — gradient end color
   accentColor: string;     // CSS hex — highlight color for lines and accents
   textColor: string;       // CSS hex — main text color (usually white)
-  voiceSrc: string;             // Path relative to Remotion public/ — the mixed audio (VO + music)
-  backgroundImageSrc?: string;  // Optional — path to Kie.ai generated background image in public/
+  voiceSrc: string;              // Path relative to Remotion public/ — the mixed audio (VO + music)
+  backgroundImageSrc?: string;   // Single image fallback (backwards compat)
+  // 📘 When multiple images are provided they crossfade evenly across the video duration.
+  // Takes priority over backgroundImageSrc when non-empty.
+  backgroundImageSrcs?: string[];
 };
 
 // 📘 Frame timing constants — all measured in frames at 30fps.
 // 30 frames = 1 second. Having named constants avoids "magic numbers" in the code.
-const INTRO_END = 150;       // Intro (brand + tagline) runs for 5 seconds
-const MESSAGES_START = 180;  // Small 1-second gap before key messages begin
+const MESSAGES_START = 180;  // Intro runs for 5s (150 frames), then 1s gap before key messages
 
 // 📘 The main PromoVideo component — Remotion calls this once per frame.
 // Each call receives the same props but useCurrentFrame() returns a different number,
@@ -52,9 +54,27 @@ export const PromoVideo: React.FC<PromoVideoProps> = ({
   textColor,
   voiceSrc,
   backgroundImageSrc,
+  backgroundImageSrcs,
 }) => {
   const frame = useCurrentFrame();
   const { fps, durationInFrames } = useVideoConfig();
+
+  // 📘 Resolve the image list — prefer backgroundImageSrcs (multiple images) over the
+  // single backgroundImageSrc fallback. An empty array means use the CSS gradient.
+  const images: string[] =
+    backgroundImageSrcs && backgroundImageSrcs.length > 0
+      ? backgroundImageSrcs
+      : backgroundImageSrc
+      ? [backgroundImageSrc]
+      : [];
+
+  // 📘 When multiple images are provided, each one occupies an equal share of the total
+  // duration and crossfades into the next over CROSSFADE_FRAMES (1 second).
+  // 🔗 Remotion interpolate: https://www.remotion.dev/docs/interpolate
+  const CROSSFADE_FRAMES = 30;
+  const framesPerImage = images.length > 1
+    ? Math.floor(durationInFrames / images.length)
+    : durationInFrames;
 
   // ── Act 1: Intro — Brand name and tagline ──
 
@@ -146,8 +166,9 @@ export const PromoVideo: React.FC<PromoVideoProps> = ({
     { extrapolateLeft: "clamp", extrapolateRight: "clamp" }
   );
 
-  // ── Vignette opacity — only used in gradient-background fallback mode ──
-  const vignetteOpacity = backgroundImageSrc ? 0 : 0.4;
+  // 📘 Vignette is only visible when falling back to the gradient background —
+  // the dark overlay on top of real images already handles contrast.
+  const vignetteOpacity = images.length > 0 ? 0 : 0.4;
 
   return (
     // 📘 AbsoluteFill is Remotion's full-frame container — like position: absolute; inset: 0.
@@ -161,21 +182,48 @@ export const PromoVideo: React.FC<PromoVideoProps> = ({
         fontFamily: "Georgia, 'Times New Roman', serif",
       }}
     >
-      {/* ── Background: Kie.ai image if available, CSS gradient as fallback ── */}
-      {backgroundImageSrc ? (
+      {/* ── Background: uploaded images (with crossfade) or CSS gradient fallback ── */}
+      {images.length > 0 ? (
         <AbsoluteFill>
-          {/* 📘 Remotion's <Img> component is like <img> but handles caching correctly.
-              objectFit: "cover" fills the frame without stretching — crops if needed.
-              🔗 Remotion Img: https://www.remotion.dev/docs/img */}
-          <Img
-            src={staticFile(backgroundImageSrc)}
-            style={{ width: "100%", height: "100%", objectFit: "cover" }}
-          />
-          {/* Dark overlay — ensures white text is readable over any image */}
+          {/* 📘 Render every image as a stacked layer. Each one fades in and out so
+              they crossfade smoothly into one another as the video plays.
+              The last image stays fully visible until the video ends. */}
+          {images.map((src, i) => {
+            const start = i * framesPerImage;
+            const end = i === images.length - 1 ? durationInFrames : (i + 1) * framesPerImage;
+            // 📘 Single image: always fully visible, no interpolation needed.
+            // Multiple images: fade in over CROSSFADE_FRAMES, hold, fade out over CROSSFADE_FRAMES.
+            const opacity =
+              images.length === 1
+                ? 1
+                : i === images.length - 1
+                ? interpolate(frame, [start, start + CROSSFADE_FRAMES], [0, 1], {
+                    extrapolateLeft: "clamp",
+                    extrapolateRight: "clamp",
+                  })
+                : interpolate(
+                    frame,
+                    [start, start + CROSSFADE_FRAMES, end - CROSSFADE_FRAMES, end],
+                    [0, 1, 1, 0],
+                    { extrapolateLeft: "clamp", extrapolateRight: "clamp" }
+                  );
+            return (
+              <AbsoluteFill key={i} style={{ opacity }}>
+                {/* 📘 Remotion's <Img> handles caching and frame-accurate loading.
+                    objectFit: "cover" fills the frame without distorting the image.
+                    🔗 Remotion Img: https://www.remotion.dev/docs/img */}
+                <Img
+                  src={staticFile(src)}
+                  style={{ width: "100%", height: "100%", objectFit: "cover" }}
+                />
+              </AbsoluteFill>
+            );
+          })}
+          {/* Dark overlay sits on top of all images — keeps white text readable */}
           <AbsoluteFill style={{ background: "rgba(0,0,0,0.50)" }} />
         </AbsoluteFill>
       ) : (
-        // Gradient fallback — used when image generation was skipped or failed
+        // Gradient fallback — used when no images were uploaded or generated
         <AbsoluteFill
           style={{
             background: `linear-gradient(145deg, ${gradientFrom} 0%, ${gradientTo} 100%)`,

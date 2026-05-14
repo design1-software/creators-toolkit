@@ -327,7 +327,15 @@ export default function PromoPage() {
       const renderRes = await fetch("/api/promo/render", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ jobId, production, voiceSrc: finalAudioSrc, backgroundImageSrc }),
+        body: JSON.stringify({
+          jobId,
+          production,
+          voiceSrc: finalAudioSrc,
+          backgroundImageSrc,
+          // 📘 Pass all uploaded images so Remotion can crossfade through them.
+          // Falls back to the single backgroundImageSrc when no uploads exist.
+          backgroundImageSrcs: currentImages.length > 0 ? currentImages : undefined,
+        }),
       });
 
       const renderData = await renderRes.json();
