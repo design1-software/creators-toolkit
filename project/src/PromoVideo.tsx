@@ -211,10 +211,12 @@ export const PromoVideo: React.FC<PromoVideoProps> = ({
               <AbsoluteFill key={i} style={{ opacity }}>
                 {/* 📘 Remotion's <Img> handles caching and frame-accurate loading.
                     objectFit: "cover" fills the frame without distorting the image.
+                    objectPosition: "center 20%" keeps the focal point in the upper portion
+                    so portrait photos don't lose the subject's head at the top edge.
                     🔗 Remotion Img: https://www.remotion.dev/docs/img */}
                 <Img
                   src={staticFile(src)}
-                  style={{ width: "100%", height: "100%", objectFit: "cover" }}
+                  style={{ width: "100%", height: "100%", objectFit: "cover", objectPosition: "center 20%" }}
                 />
               </AbsoluteFill>
             );
