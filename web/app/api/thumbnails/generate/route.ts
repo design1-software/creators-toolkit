@@ -7,7 +7,16 @@
 import { NextRequest, NextResponse } from "next/server";
 import Anthropic from "@anthropic-ai/sdk";
 
-const anthropic = new Anthropic();
+// 📘 Lazy initialization — defers client creation to first request so ANTHROPIC_API_KEY
+// is read at runtime, not at build time when the env var isn't available on Railway.
+let _anthropic: Anthropic | null = null;
+function getClient(): Anthropic {
+  if (_anthropic) return _anthropic;
+  const apiKey = process.env.ANTHROPIC_API_KEY;
+  if (!apiKey) throw new Error("ANTHROPIC_API_KEY is not set. Add it to your environment variables.");
+  _anthropic = new Anthropic({ apiKey });
+  return _anthropic;
+}
 
 const THUMBNAIL_SYSTEM_PROMPT = `You are a senior YouTube thumbnail designer with a proven track record of generating high-CTR thumbnails.
 
@@ -47,7 +56,7 @@ Style preference: ${stylePreference || "No preference — surprise me"}
 
 Generate 4 distinct thumbnail concepts now.`;
 
-    const response = await anthropic.messages.create({
+    const response = await getClient().messages.create({
       model: "claude-sonnet-4-6",
       max_tokens: 1024,
       system: THUMBNAIL_SYSTEM_PROMPT,

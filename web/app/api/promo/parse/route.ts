@@ -7,7 +7,16 @@
 import { NextRequest, NextResponse } from "next/server";
 import Anthropic from "@anthropic-ai/sdk";
 
-const anthropic = new Anthropic();
+// 📘 Lazy initialization — the client is created on first use, not at module load.
+// This prevents a build crash on Railway where ANTHROPIC_API_KEY isn't available until runtime.
+let _anthropic: Anthropic | null = null;
+function getClient(): Anthropic {
+  if (_anthropic) return _anthropic;
+  const apiKey = process.env.ANTHROPIC_API_KEY;
+  if (!apiKey) throw new Error("ANTHROPIC_API_KEY is not set. Add it to your environment variables.");
+  _anthropic = new Anthropic({ apiKey });
+  return _anthropic;
+}
 
 // 📘 This system prompt instructs Claude to act as a production coordinator.
 // It reads an unstructured creative brief and outputs a precise JSON object
@@ -47,7 +56,7 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "brief is required" }, { status: 400 });
     }
 
-    const response = await anthropic.messages.create({
+    const response = await getClient().messages.create({
       model: "claude-sonnet-4-6",
       max_tokens: 1024,
       system: PARSE_SYSTEM_PROMPT,
