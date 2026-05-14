@@ -14,6 +14,14 @@ export async function generateMusic(prompt: string): Promise<string> {
   const apiKey = process.env.SUNO_API_KEY;
   if (!apiKey) throw new Error("SUNO_API_KEY is not set in .env.local");
 
+  // 📘 Suno requires a callBackUrl — the URL it will POST the result to when done.
+  // We create a minimal receiver at /api/suno/callback that just returns 200.
+  // We still poll manually rather than relying on the webhook, so the callback
+  // endpoint exists only to satisfy the required field.
+  const baseUrl = process.env.APP_BASE_URL;
+  if (!baseUrl) throw new Error("APP_BASE_URL is not set in .env.local (e.g. http://localhost:3000 or your Railway URL)");
+  const callBackUrl = `${baseUrl}/api/suno/callback`;
+
   // 📘 Step 1: Submit the music generation request.
   // Suno generates 2 variations per request — we take the first one.
   const genRes = await fetch(`${SUNO_BASE}/api/v1/generate`, {
@@ -27,6 +35,7 @@ export async function generateMusic(prompt: string): Promise<string> {
       customMode: false,  // simple mode — just a prompt, no style tags needed
       instrumental: true, // no vocals — clean background music
       model: "V4",        // Suno V4 — high quality, widely available
+      callBackUrl,        // required by the API; we also poll independently
     }),
   });
 
@@ -54,10 +63,10 @@ export async function generateMusic(prompt: string): Promise<string> {
     if (!pollRes.ok) continue;
 
     const pollData = await pollRes.json();
-    // 📘 Status and sunoData may be at the top level or nested under data.
-    const status: string = pollData.data?.status ?? pollData.status ?? "";
+    // 📘 Status is at data.status; audio tracks are at data.response.sunoData.
+    const status: string = pollData.data?.status ?? "";
     const songs: Array<{ audioUrl: string }> =
-      pollData.data?.sunoData ?? pollData.sunoData ?? [];
+      pollData.data?.response?.sunoData ?? [];
 
     if (status === "SUCCESS" || status === "FIRST_SUCCESS") {
       if (songs.length === 0) throw new Error("Suno returned success but no audio tracks");

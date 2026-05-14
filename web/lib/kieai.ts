@@ -47,9 +47,10 @@ export async function generateImage(
   for (let attempt = 0; attempt < 24; attempt++) {
     await sleep(5000);
 
-    const pollRes = await fetch(`${KIE_BASE}/record-info?taskId=${taskId}`, {
-      headers: { Authorization: `Bearer ${apiKey}` },
-    });
+    const pollRes = await fetch(
+      `${KIE_BASE}/api/v1/gpt4o-image/record-info?taskId=${taskId}`,
+      { headers: { Authorization: `Bearer ${apiKey}` } }
+    );
 
     if (!pollRes.ok) continue; // transient error — try again next loop
 
@@ -57,12 +58,13 @@ export async function generateImage(
     const flag: number = pollData.data?.successFlag;
 
     if (flag === 2) {
-      throw new Error("Kie.ai image generation failed (successFlag=2)");
+      const errMsg = pollData.data?.errorMessage ?? "successFlag=2";
+      throw new Error(`Kie.ai image generation failed: ${errMsg}`);
     }
 
     if (flag === 1) {
-      // 📘 Image is ready — extract the first URL from the result_urls array.
-      const urls: string[] = pollData.data?.response?.result_urls ?? [];
+      // 📘 Image is ready — result_urls is directly on data (not nested under response).
+      const urls: string[] = pollData.data?.result_urls ?? [];
       if (urls.length === 0) {
         throw new Error("Kie.ai returned successFlag=1 but no result_urls");
       }
